@@ -1,0 +1,45 @@
+{
+  "manifest_version": 3,
+  "name": "Marktplaats Herplaatser",
+  "version": "1.0.0",
+  "description": "Automatiseer het herplaatsen van advertenties op Marktplaats.nl",
+  
+  "permissions": [
+    "storage",
+    "tabs"
+  ],
+  
+  "host_permissions": [
+    "*://*.marktplaats.nl/*"
+  ],
+  
+  "background": {
+    "service_worker": "background.js"
+  },
+  
+  "content_scripts": [
+    {
+      "matches": [
+        "*://www.marktplaats.nl/v/mijn-advertenties*",
+        "*://www.marktplaats.nl/my-account/sell/*"
+      ],
+      "js": ["content_scripts/mijn_advertenties.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["*://www.marktplaats.nl/a/*"],
+      "js": ["content_scripts/advertentie_scraper.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["*://www.marktplaats.nl/v/verwijder-advertentie*", "*://www.marktplaats.nl/*/verwijder*"],
+      "js": ["content_scripts/verwijder_advertentie.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["*://www.marktplaats.nl/v/plaats-advertentie*"],
+      "js": ["content_scripts/plaats_advertentie.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
