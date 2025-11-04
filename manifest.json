@@ -54,12 +54,13 @@
     },
     {
       "matches": [
-        "*://www.marktplaats.nl/plaats*",
+        "*://www.marktplaats.nl/plaats",
+        "*://www.marktplaats.nl/plaats/*",
         "*://www.marktplaats.nl/v/plaats-advertentie*",
         "*://www.marktplaats.nl/seller/post/*"
       ],
       "js": ["content_scripts/plaats_advertentie.js"],
-      "run_at": "document_idle"
+      "run_at": "document_end"
     }
   ]
 }

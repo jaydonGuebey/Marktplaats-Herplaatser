@@ -93,12 +93,13 @@ async function handleScraping(repostJob) {
 // ============================================
 // HANDLE DELETING
 // Klik op verwijder knop en handel modal af
+// VERBETERDE VERSIE met betere modal detectie
 // ============================================
 async function handleDeleting(repostJob) {
   console.log('[SellerView] 🗑️ DELETING MODE');
   
   // STAP 1: Klik op verwijder knop
-  console.log('[SellerView] 🎯 Zoek verwijder knop...');
+  console.log('[SellerView] 🎯 STAP 1: Zoek verwijder knop...');
   const deleteButton = findDeleteButton();
   
   if (!deleteButton) {
@@ -113,37 +114,20 @@ async function handleDeleting(repostJob) {
   console.log('[SellerView] 🖱️ Klik op verwijder knop...');
   deleteButton.click();
   
-  // STAP 2: Wacht actief op modal
-  console.log('[SellerView] ⏳ Wacht op modal...');
-  const modal = await waitForModal(7);
+  // STAP 2: Wacht actief op modal met LANGERE timeout
+  console.log('[SellerView] ⏳ Wacht op modal (max 10 seconden)...');
+  const modal = await waitForModal(10);
   
   if (!modal) {
-    console.error('[SellerView] ❌ Modal niet gevonden na 7 seconden!');
-    console.log('[SellerView] 🔄 Probeer backup methode: zoek knop direct...');
+    console.error('[SellerView] ❌ Modal niet gevonden na 10 seconden!');
+    console.log('[SellerView] 🔄 Probeer backup methode...');
     
-    // BACKUP: Zoek knop zonder modal
-    const button = findModalButtonDirect();
+    // BACKUP: Zoek knop direct zonder modal container
+    const button = await findModalButtonWithRetry(5);
+    
     if (button) {
       console.log('[SellerView] ✅ Knop gevonden via backup methode!');
-      
-      // BELANGRIJK: Stuur DELETE_CONFIRMED VOOR de klik
-      console.log('[SellerView] 📤 Stuur DELETE_CONFIRMED VOOR klik...');
-      try {
-        const response = await chrome.runtime.sendMessage({
-          action: 'DELETE_CONFIRMED'
-        });
-        console.log('[SellerView] ✅ DELETE_CONFIRMED verzonden:', response);
-      } catch (error) {
-        console.error('[SellerView] ❌ Fout bij versturen DELETE_CONFIRMED:', error);
-      }
-      
-      // Nu pas klikken
-      await sleep(500);
-      button.click();
-      
-      console.log('[SellerView] 🎉 Verwijdering voltooid (via backup)!');
-      console.log('[SellerView] ⏳ Wacht op redirect en navigatie...');
-      
+      await handleModalButton(button);
       return;
     } else {
       console.error('[SellerView] ❌ Ook backup methode gefaald!');
@@ -153,32 +137,29 @@ async function handleDeleting(repostJob) {
   
   console.log('[SellerView] ✅ Modal gevonden!');
   
-  // STAP 3: Klik op "Niet verkocht via Marktplaats"
-  const buttons = modal.querySelectorAll('button');
-  console.log('[SellerView] Knoppen in modal:', buttons.length);
-  
-  let targetButton = null;
-  for (const button of buttons) {
-    const text = button.textContent.trim().toLowerCase();
-    if (text.includes('niet verkocht') || button.className.includes('secondary')) {
-      targetButton = button;
-      console.log('[SellerView] ✅ Gevonden:', button.textContent.trim());
-      break;
-    }
-  }
-  
-  if (!targetButton && buttons.length > 0) {
-    targetButton = buttons[buttons.length - 1]; // Laatste knop
-    console.log('[SellerView] ⚠️ Fallback naar laatste knop');
-  }
+  // STAP 3: Zoek de juiste knop in de modal
+  const targetButton = findButtonInModal(modal);
   
   if (!targetButton) {
-    console.error('[SellerView] ❌ Geen geschikte knop gevonden!');
+    console.error('[SellerView] ❌ Geen geschikte knop gevonden in modal!');
     return;
   }
   
-  // STAP 4: Bevestig verwijdering VOOR de klik
+  // STAP 4: Handle de knop
+  await handleModalButton(targetButton);
+}
+
+// ============================================
+// HANDLE MODAL BUTTON
+// Stuur DELETE_CONFIRMED en klik op knop
+// ============================================
+async function handleModalButton(button) {
+  console.log('[SellerView] 🎯 Handle modal knop...');
+  console.log('[SellerView] Knop tekst:', button.textContent.trim());
+  
+  // BELANGRIJK: Stuur DELETE_CONFIRMED VOOR de klik
   console.log('[SellerView] 📤 Stuur DELETE_CONFIRMED VOOR klik...');
+  
   try {
     const response = await chrome.runtime.sendMessage({
       action: 'DELETE_CONFIRMED'
@@ -188,14 +169,58 @@ async function handleDeleting(repostJob) {
     console.error('[SellerView] ❌ Fout bij versturen DELETE_CONFIRMED:', error);
   }
   
-  // Wacht even om zeker te zijn
+  // Wacht even
   await sleep(500);
   
+  // Scroll en highlight
+  button.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  await sleep(300);
+  
+  // Highlight voor debugging
+  highlightElement(button);
+  await sleep(300);
+  
+  // Nu pas klikken
   console.log('[SellerView] 🖱️ Klik op modal knop...');
-  targetButton.click();
+  button.click();
   
   console.log('[SellerView] 🎉 Verwijdering voltooid!');
   console.log('[SellerView] ⏳ Wacht op redirect en navigatie...');
+}
+
+// ============================================
+// FIND BUTTON IN MODAL
+// Zoekt de juiste knop in de modal
+// ============================================
+function findButtonInModal(modal) {
+  console.log('[SellerView] 🔍 Zoek knop in modal...');
+  
+  const buttons = modal.querySelectorAll('button');
+  console.log('[SellerView] Knoppen in modal:', buttons.length);
+  
+  buttons.forEach((btn, i) => {
+    console.log(`  [${i + 1}] "${btn.textContent.trim()}" - Class: ${btn.className}`);
+  });
+  
+  // Zoek de "Niet verkocht via Marktplaats" knop (secondary button)
+  for (const button of buttons) {
+    const text = button.textContent.trim().toLowerCase();
+    const isSecondary = button.className.includes('secondary');
+    
+    if (isSecondary || text.includes('niet verkocht')) {
+      console.log('[SellerView] ✅ Target knop gevonden:', button.textContent.trim());
+      return button;
+    }
+  }
+  
+  // Fallback: laatste knop (vaak de secondary)
+  if (buttons.length > 0) {
+    const lastButton = buttons[buttons.length - 1];
+    console.log('[SellerView] ⚠️ Fallback naar laatste knop:', lastButton.textContent.trim());
+    return lastButton;
+  }
+  
+  return null;
 }
 
 // ============================================
@@ -206,18 +231,24 @@ function findDeleteButton() {
   const selectors = [
     'button.deleteButton',
     'button.hz-Button--destructive',
-    'button:has(.ActionButtons-deleteLabel)'
+    'button:has(.ActionButtons-deleteLabel)',
+    'button[class*="delete"]',
+    'button[class*="Delete"]'
   ];
   
   for (const selector of selectors) {
     const button = document.querySelector(selector);
-    if (button) return button;
+    if (button) {
+      console.log('[SellerView] ✅ Delete button gevonden met:', selector);
+      return button;
+    }
   }
   
   // Fallback: zoek button met "Verwijder" tekst
   const buttons = document.querySelectorAll('button');
   for (const button of buttons) {
-    if (button.textContent.includes('Verwijder')) {
+    if (button.textContent.toLowerCase().includes('verwijder')) {
+      console.log('[SellerView] ✅ Delete button gevonden via tekst');
       return button;
     }
   }
@@ -226,29 +257,22 @@ function findDeleteButton() {
 }
 
 function findModal() {
-  // Debug: print alle mogelijke modals
-  const allDivs = document.querySelectorAll('div[role="dialog"], .hz-Modal, [class*="Modal"]');
-  
-  if (allDivs.length > 0) {
-    console.log('[SellerView] 🔍 Gevonden elementen met modal classes:', allDivs.length);
-    allDivs.forEach((div, i) => {
-      console.log(`  [${i + 1}] Class: ${div.className}`);
-      console.log(`  [${i + 1}] Visible: offsetParent=${!!div.offsetParent}, offsetHeight=${div.offsetHeight}`);
-      console.log(`  [${i + 1}] Display: ${window.getComputedStyle(div).display}`);
-      console.log(`  [${i + 1}] Visibility: ${window.getComputedStyle(div).visibility}`);
-    });
-  }
-  
   const selectors = [
     '.ReactModal__Content--after-open',
     '.deleteModal',
     '[role="dialog"]',
     '.hz-Modal',
-    'div[class*="Modal"][role="dialog"]'
+    'div[class*="Modal"][role="dialog"]',
+    '[class*="Modal"]'
   ];
+  
+  console.log('[SellerView] 🔍 Zoek modal...');
   
   for (const selector of selectors) {
     const modals = document.querySelectorAll(selector);
+    
+    console.log(`[SellerView] Selector "${selector}": ${modals.length} gevonden`);
+    
     for (const modal of modals) {
       const style = window.getComputedStyle(modal);
       const isVisible = modal.offsetParent !== null && 
@@ -257,28 +281,37 @@ function findModal() {
                        style.visibility !== 'hidden' &&
                        style.opacity !== '0';
       
+      console.log(`[SellerView]   Modal class="${modal.className}" visible=${isVisible}`);
+      
       if (isVisible) {
-        console.log('[SellerView] ✅ Modal gevonden met selector:', selector);
+        console.log('[SellerView] ✅ Zichtbare modal gevonden!');
         return modal;
       }
     }
   }
   
-  console.warn('[SellerView] Geen zichtbare modal gevonden');
+  console.warn('[SellerView] ⚠️ Geen zichtbare modal gevonden');
   return null;
 }
 
-// Wacht actief tot modal verschijnt
-async function waitForModal(maxSeconds = 5) {
-  console.log('[SellerView] 🔍 Wacht actief op modal...');
+// Wacht actief tot modal verschijnt - LANGERE TIMEOUT
+async function waitForModal(maxSeconds = 10) {
+  console.log(`[SellerView] 🔍 Wacht actief op modal (max ${maxSeconds} sec)...`);
   const maxAttempts = maxSeconds * 10; // Check elke 100ms
   
   for (let i = 0; i < maxAttempts; i++) {
     const modal = findModal();
+    
     if (modal) {
       console.log(`[SellerView] ✅ Modal gevonden na ${i * 100}ms`);
       return modal;
     }
+    
+    // Log elke seconde
+    if (i % 10 === 0 && i > 0) {
+      console.log(`[SellerView] ⏳ Nog geen modal na ${i / 10} seconden...`);
+    }
+    
     await sleep(100);
   }
   
@@ -286,37 +319,50 @@ async function waitForModal(maxSeconds = 5) {
   return null;
 }
 
-// BACKUP: Zoek modal knop direct zonder modal container
-function findModalButtonDirect() {
-  console.log('[SellerView] 🔍 Zoek modal knop direct...');
+// BACKUP: Zoek modal knop direct met meerdere pogingen
+async function findModalButtonWithRetry(maxAttempts = 5) {
+  console.log('[SellerView] 🔄 Start backup methode: zoek knop direct...');
   
-  // Zoek alle buttons op de hele pagina
-  const allButtons = document.querySelectorAll('button');
-  console.log('[SellerView] Totaal buttons op pagina:', allButtons.length);
-  
-  for (const button of allButtons) {
-    const text = button.textContent.trim().toLowerCase();
-    const isSecondary = button.className.includes('secondary');
-    const isInModal = button.closest('[role="dialog"]') || button.closest('.hz-Modal');
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    console.log(`[SellerView] Poging ${attempt}/${maxAttempts}...`);
     
-    // Zoek "Niet verkocht" knop
-    if ((text.includes('niet verkocht') || isSecondary) && isInModal) {
-      console.log('[SellerView] ✅ Knop gevonden!', button.textContent.trim());
-      return button;
+    // Zoek alle buttons op de hele pagina
+    const allButtons = document.querySelectorAll('button');
+    console.log(`[SellerView] Totaal buttons op pagina: ${allButtons.length}`);
+    
+    for (const button of allButtons) {
+      const text = button.textContent.trim().toLowerCase();
+      const isSecondary = button.className.includes('secondary');
+      
+      // Zoek "Niet verkocht" knop die zichtbaar is
+      if ((text.includes('niet verkocht') || isSecondary) && button.offsetParent !== null) {
+        console.log('[SellerView] ✅ Knop gevonden!', button.textContent.trim());
+        return button;
+      }
+    }
+    
+    // Wacht 1 seconde voor volgende poging
+    if (attempt < maxAttempts) {
+      console.log('[SellerView] ⏳ Wacht 1 seconde...');
+      await sleep(1000);
     }
   }
   
-  // Fallback: zoek ANY button met "niet verkocht"
-  for (const button of allButtons) {
-    const text = button.textContent.trim().toLowerCase();
-    if (text.includes('niet verkocht')) {
-      console.log('[SellerView] ⚠️ Knop gevonden (zonder modal check):', button.textContent.trim());
-      return button;
-    }
-  }
-  
-  console.error('[SellerView] ❌ Geen geschikte knop gevonden');
+  console.error('[SellerView] ❌ Geen geschikte knop gevonden na alle pogingen');
   return null;
+}
+
+function highlightElement(element) {
+  const originalOutline = element.style.outline;
+  const originalBackground = element.style.backgroundColor;
+  
+  element.style.outline = '3px solid #10b981';
+  element.style.backgroundColor = '#d1fae5';
+  
+  setTimeout(() => {
+    element.style.outline = originalOutline;
+    element.style.backgroundColor = originalBackground;
+  }, 2000);
 }
 
 function sleep(ms) {

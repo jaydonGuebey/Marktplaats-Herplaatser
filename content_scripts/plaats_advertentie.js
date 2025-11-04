@@ -3,7 +3,11 @@
 // Vult het advertentieformulier in op /plaats pagina
 // ============================================
 
-console.log('[Plaats] Script geladen op:', window.location.href);
+console.log('='.repeat(60));
+console.log('[Plaats] 📄 Script geladen!');
+console.log('[Plaats] URL:', window.location.href);
+console.log('[Plaats] Timestamp:', new Date().toISOString());
+console.log('='.repeat(60));
 
 // Wacht tot pagina geladen is
 if (document.readyState === 'loading') {
@@ -20,6 +24,7 @@ async function init() {
   try {
     console.log('[Plaats] 🔍 Script init gestart...');
     console.log('[Plaats] URL:', window.location.href);
+    console.log('[Plaats] ReadyState:', document.readyState);
     
     // Check of we in een actieve posting job zitten
     const { repostJob } = await chrome.storage.local.get('repostJob');
@@ -45,17 +50,255 @@ async function init() {
     });
     
     // Wacht tot pagina volledig geladen is
-    console.log('[Plaats] ⏳ Wacht 3 seconden voor pagina...');
-    await sleep(3000);
+    console.log('[Plaats] ⏳ Wacht 2 seconden voor pagina...');
+    await sleep(2000);
     
-    // Start het invullen van het formulier
-    console.log('[Plaats] 🚀 Start formulier invullen...');
-    await fillForm(repostJob);
+    // Check welke pagina we hebben
+    const isInitialPage = checkIfInitialPage();
+    
+    if (isInitialPage) {
+      console.log('[Plaats] 📝 Detectie: Initial /plaats pagina (categorie selectie)');
+      await handleInitialPage(repostJob);
+    } else {
+      console.log('[Plaats] 📝 Detectie: Formulier pagina (details invullen)');
+      await fillForm(repostJob);
+    }
     
   } catch (error) {
     console.error('[Plaats] ❌ FOUT in init:', error);
     console.error('[Plaats] Stack:', error.stack);
   }
+}
+
+// ============================================
+// CHECK IF INITIAL PAGE
+// Controleert of we op de eerste /plaats pagina zijn (categorie selectie)
+// ============================================
+function checkIfInitialPage() {
+  // Zoek naar de specifieke titel input op de initial page
+  const titleInput = document.querySelector('#TextField-vulEenTitelIn');
+  
+  // Zoek naar de "Vind categorie" knop
+  const findCategoryButton = document.querySelector('button[data-testid="findCategory"]');
+  
+  // Als we deze elementen hebben, zijn we op de initial page
+  const isInitial = !!(titleInput && findCategoryButton);
+  
+  console.log('[Plaats] Page check:', {
+    hasTitleInput: !!titleInput,
+    hasFindCategoryButton: !!findCategoryButton,
+    isInitial: isInitial
+  });
+  
+  return isInitial;
+}
+
+// ============================================
+// HANDLE INITIAL PAGE
+// Handelt de eerste /plaats pagina af (titel + categorie selectie)
+// ============================================
+async function handleInitialPage(repostJob) {
+  console.log('[Plaats] 🎯 INITIAL PAGE: Titel invullen en categorie selecteren');
+  
+  const { adData } = repostJob;
+  
+  try {
+    // STAP 1: Vul titel in
+    console.log('[Plaats] 📝 STAP 1: Vul titel in');
+    const titleFilled = await fillTitleInitialPage(adData.title);
+    
+    if (!titleFilled) {
+      console.error('[Plaats] ❌ Kon titel niet invullen');
+      return;
+    }
+    
+    await sleep(500);
+    
+    // STAP 2: Klik op "Vind categorie" knop
+    console.log('[Plaats] 🔍 STAP 2: Klik op "Vind categorie" knop');
+    const buttonClicked = await clickFindCategoryButton();
+    
+    if (!buttonClicked) {
+      console.error('[Plaats] ❌ Kon "Vind categorie" knop niet klikken');
+      return;
+    }
+    
+    await sleep(1500); // Wacht op suggesties
+    
+    // STAP 3: Selecteer eerste suggestie uit de lijst
+    console.log('[Plaats] 🎯 STAP 3: Selecteer eerste categorie suggestie');
+    const categorySelected = await selectFirstCategorySuggestion();
+    
+    if (!categorySelected) {
+      console.error('[Plaats] ❌ Kon geen categorie selecteren');
+      return;
+    }
+    
+    await sleep(500);
+    
+    // STAP 4: Klik op "Verder" knop
+    console.log('[Plaats] ➡️ STAP 4: Klik op "Verder" knop');
+    const continueClicked = await clickContinueButton();
+    
+    if (!continueClicked) {
+      console.error('[Plaats] ❌ Kon "Verder" knop niet vinden');
+      return;
+    }
+    
+    console.log('[Plaats] ✅ Initial page voltooid! Wacht op formulier pagina...');
+    
+  } catch (error) {
+    console.error('[Plaats] ❌ FOUT in handleInitialPage:', error);
+  }
+}
+
+// ============================================
+// FILL TITLE INITIAL PAGE
+// Vult de titel in op de initial page
+// ============================================
+async function fillTitleInitialPage(title) {
+  console.log('[Plaats] 📝 Vul titel in:', title);
+  
+  const input = document.querySelector('#TextField-vulEenTitelIn');
+  
+  if (!input) {
+    console.error('[Plaats] ❌ Titel input niet gevonden');
+    return false;
+  }
+  
+  console.log('[Plaats] ✅ Titel input gevonden');
+  
+  input.focus();
+  await sleep(200);
+  
+  input.value = title;
+  
+  // Trigger events
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+  input.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
+  
+  await sleep(200);
+  
+  console.log('[Plaats] ✅ Titel ingevuld:', input.value);
+  return true;
+}
+
+// ============================================
+// CLICK FIND CATEGORY BUTTON
+// Klikt op de "Vind categorie" knop
+// ============================================
+async function clickFindCategoryButton() {
+  console.log('[Plaats] 🔍 Zoek "Vind categorie" knop...');
+  
+  const button = document.querySelector('button[data-testid="findCategory"]');
+  
+  if (!button) {
+    console.error('[Plaats] ❌ "Vind categorie" knop niet gevonden');
+    return false;
+  }
+  
+  console.log('[Plaats] ✅ "Vind categorie" knop gevonden');
+  
+  button.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  await sleep(300);
+  
+  button.click();
+  
+  console.log('[Plaats] ✅ "Vind categorie" knop geklikt');
+  return true;
+}
+
+// ============================================
+// SELECT FIRST CATEGORY SUGGESTION
+// Selecteert de eerste suggestie uit de lijst
+// ============================================
+async function selectFirstCategorySuggestion() {
+  console.log('[Plaats] 🔍 Wacht op categorie suggesties lijst...');
+  
+  // Wacht max 5 seconden op suggesties
+  const maxWait = 5000;
+  const startTime = Date.now();
+  
+  while (Date.now() - startTime < maxWait) {
+    // Zoek naar suggestie lijst items
+    const suggestions = document.querySelectorAll('li[role="listitem"].CategorySuggestions-listItem');
+    
+    if (suggestions.length > 0) {
+      console.log('[Plaats] ✅ Suggesties lijst gevonden:', suggestions.length, 'items');
+      
+      // Selecteer de eerste suggestie
+      const firstSuggestion = suggestions[0];
+      const categoryText = firstSuggestion.textContent.trim();
+      console.log('[Plaats] 📌 Selecteer eerste suggestie:', categoryText.substring(0, 50));
+      
+      // Zoek de radio button in de eerste suggestie
+      const radioButton = firstSuggestion.querySelector('input[type="radio"]');
+      
+      if (radioButton) {
+        console.log('[Plaats] ✅ Radio button gevonden');
+        
+        firstSuggestion.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        await sleep(300);
+        
+        // Klik op de radio button
+        radioButton.click();
+        radioButton.checked = true;
+        
+        // Trigger change event
+        radioButton.dispatchEvent(new Event('change', { bubbles: true }));
+        
+        console.log('[Plaats] ✅ Categorie geselecteerd');
+        return true;
+      } else {
+        // Fallback: klik op het hele list item
+        console.log('[Plaats] ⚠️ Radio button niet gevonden, klik op list item');
+        firstSuggestion.click();
+        return true;
+      }
+    }
+    
+    await sleep(200);
+  }
+  
+  console.error('[Plaats] ⏱️ Timeout: Geen suggesties gevonden na 5 seconden');
+  return false;
+}
+
+// ============================================
+// CLICK CONTINUE BUTTON
+// Klikt op de "Verder" knop
+// ============================================
+async function clickContinueButton() {
+  console.log('[Plaats] 🔍 Zoek "Verder" knop...');
+  
+  const button = document.querySelector('button[data-testid="redirectToPlaceAd"]');
+  
+  if (!button) {
+    console.error('[Plaats] ❌ "Verder" knop niet gevonden');
+    return false;
+  }
+  
+  console.log('[Plaats] ✅ "Verder" knop gevonden');
+  
+  // Check of knop enabled is
+  if (button.disabled) {
+    console.warn('[Plaats] ⚠️ Knop is disabled, wacht 1 seconde...');
+    await sleep(1000);
+    
+    if (button.disabled) {
+      console.error('[Plaats] ❌ Knop blijft disabled');
+      return false;
+    }
+  }
+  
+  button.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  await sleep(300);
+  
+  button.click();
+  
+  console.log('[Plaats] ✅ "Verder" knop geklikt');
+  return true;
 }
 
 // ============================================
@@ -76,17 +319,14 @@ async function fillForm(repostJob) {
     await fillDescription(adData.description.text);
     await sleep(1000);
     
-    // STAP 3: Selecteer prijstype
+    // STAP 3: Selecteer prijstype (altijd "Zie omschrijving")
     console.log('[Plaats] 💰 STAP 3: Selecteer prijstype');
     await selectPriceType(adData.priceType);
     await sleep(1000);
     
-    // STAP 4: Vul prijs in (als niet gratis)
-    if (adData.priceType !== 'GRATIS' && adData.price?.numeric) {
-      console.log('[Plaats] 💵 STAP 4: Vul prijs in');
-      await fillPrice(adData.price.numeric);
-      await sleep(1000);
-    }
+    // STAP 4: Prijs wordt NIET ingevuld (staat in beschrijving)
+    // Overslaan van fillPrice()
+    console.log('[Plaats] ℹ️ STAP 4: Prijs overgeslagen (zie omschrijving)');
     
     // STAP 5: Selecteer "Ophalen"
     console.log('[Plaats] 📦 STAP 5: Selecteer "Ophalen"');
@@ -209,43 +449,125 @@ async function convertBase64ToFiles(imageData) {
 
 // ============================================
 // FILL DESCRIPTION
-// Vult de beschrijving in de RichTextEditor
+// Vult de beschrijving in de RichTextEditor (Lexical editor)
+// Gebruikt type simulatie voor maximale compatibiliteit
 // ============================================
 async function fillDescription(description) {
   console.log('[Plaats] 📝 Vul beschrijving in (', description.length, 'karakters)');
+  console.log('[Plaats] Beschrijving preview:', description.substring(0, 100) + '...');
   
+  // Zoek de Lexical editor
   const editor = document.querySelector('.RichTextEditor-module-editorInput[data-testid="text-editor-input_nl-NL"]');
   
   if (!editor) {
     console.error('[Plaats] ❌ Beschrijving editor niet gevonden');
+    
+    // Debug: zoek alternatieve editors
+    const allEditors = document.querySelectorAll('[contenteditable="true"], [class*="editor"], [class*="Editor"]');
+    console.log('[Plaats] 🔍 Gevonden contenteditable elementen:', allEditors.length);
+    allEditors.forEach((el, i) => {
+      console.log(`  [${i}] Class: ${el.className}`);
+    });
+    
     return;
   }
   
   console.log('[Plaats] ✅ Editor gevonden');
   
-  // Focus de editor
+  // METHODE: Simuleer typing (werkt het beste voor Lexical)
   editor.focus();
+  await sleep(500);
+  
+  // Clear bestaande content
+  editor.innerHTML = '';
+  editor.textContent = '';
   await sleep(200);
   
-  // Vul tekst in
-  editor.textContent = description;
+  // Plaats cursor aan het begin
+  const range = document.createRange();
+  const selection = window.getSelection();
+  range.selectNodeContents(editor);
+  range.collapse(true);
+  selection.removeAllRanges();
+  selection.addRange(range);
   
-  // Trigger events voor Lexical editor
-  editor.dispatchEvent(new Event('input', { bubbles: true }));
+  await sleep(200);
+  
+  // Type de tekst karakter voor karakter (snelle simulatie)
+  // Voor lange teksten: gebruik chunks
+  const chunkSize = 50;
+  const chunks = [];
+  
+  for (let i = 0; i < description.length; i += chunkSize) {
+    chunks.push(description.substring(i, i + chunkSize));
+  }
+  
+  console.log('[Plaats] 📝 Typ beschrijving in', chunks.length, 'chunks...');
+  
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+    
+    // Gebruik insertText voor elke chunk
+    document.execCommand('insertText', false, chunk);
+    
+    // Trigger input event
+    editor.dispatchEvent(new InputEvent('input', {
+      bubbles: true,
+      cancelable: true,
+      inputType: 'insertText',
+      data: chunk
+    }));
+    
+    // Kleine pauze tussen chunks
+    if (i < chunks.length - 1) {
+      await sleep(50);
+    }
+  }
+  
+  console.log('[Plaats] ✅ Tekst getypt');
+  
+  await sleep(300);
+  
+  // Verificatie
+  const currentContent = editor.textContent || editor.innerText || '';
+  console.log('[Plaats] 📋 Huidige editor content lengte:', currentContent.length);
+  console.log('[Plaats] 📋 Verwachte lengte:', description.length);
+  console.log('[Plaats] 📋 Preview:', currentContent.substring(0, 100) + '...');
+  
+  if (currentContent.length > 0) {
+    console.log('[Plaats] ✅ Beschrijving ingevuld');
+  } else {
+    console.error('[Plaats] ❌ Beschrijving is nog steeds leeg!');
+    
+    // Laatste noodpoging: gebruik innerHTML met formatted text
+    console.log('[Plaats] 🔄 Noodpoging met innerHTML...');
+    const formattedText = description.replace(/\n/g, '<br>');
+    editor.innerHTML = `<p>${formattedText}</p>`;
+    
+    editor.dispatchEvent(new Event('input', { bubbles: true }));
+    editor.dispatchEvent(new Event('change', { bubbles: true }));
+    
+    await sleep(500);
+    
+    const finalContent = editor.textContent || '';
+    console.log('[Plaats] 📋 Na noodpoging lengte:', finalContent.length);
+  }
+  
+  // Trigger final change event
   editor.dispatchEvent(new Event('change', { bubbles: true }));
+  editor.dispatchEvent(new Event('blur', { bubbles: true }));
   
   // Blur
+  await sleep(200);
   editor.blur();
-  
-  console.log('[Plaats] ✅ Beschrijving ingevuld');
 }
 
 // ============================================
 // SELECT PRICE TYPE
-// Selecteert het juiste prijstype
+// Selecteert het juiste prijstype - ALTIJD "Zie omschrijving"
 // ============================================
 async function selectPriceType(priceType) {
-  console.log('[Plaats] 💰 Selecteer prijstype:', priceType);
+  console.log('[Plaats] 💰 Selecteer prijstype: Zie omschrijving (altijd)');
   
   const select = document.querySelector('#Dropdown-prijstype');
   
@@ -254,21 +576,15 @@ async function selectPriceType(priceType) {
     return;
   }
   
-  // Map prijstype naar dropdown value
-  const typeMap = {
-    'GRATIS': 'FREE',
-    'BIEDEN': 'FAST_BID',
-    'VAST_PRIJS': 'FIXED'
-  };
-  
-  const value = typeMap[priceType] || 'FIXED';
+  // Selecteer altijd "SEE_DESCRIPTION" (Zie omschrijving)
+  const value = 'SEE_DESCRIPTION';
   
   console.log('[Plaats] 🔍 Selecteer value:', value);
   
   select.value = value;
   select.dispatchEvent(new Event('change', { bubbles: true }));
   
-  console.log('[Plaats] ✅ Prijstype geselecteerd');
+  console.log('[Plaats] ✅ Prijstype geselecteerd: Zie omschrijving');
 }
 
 // ============================================
@@ -395,4 +711,4 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-console.log('[Plaats] ✅ Script klaar');
+console.log('[Plaats] ✅ Script klaar, wachtend op init...');
