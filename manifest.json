@@ -27,17 +27,36 @@
       "run_at": "document_idle"
     },
     {
-      "matches": ["*://www.marktplaats.nl/a/*"],
+      "matches": [
+        "*://www.marktplaats.nl/a/*",
+        "*://www.marktplaats.nl/v/*/*"
+      ],
       "js": ["content_scripts/advertentie_scraper.js"],
       "run_at": "document_idle"
     },
     {
-      "matches": ["*://www.marktplaats.nl/v/verwijder-advertentie*", "*://www.marktplaats.nl/*/verwijder*"],
-      "js": ["content_scripts/verwijder_advertentie.js"],
+      "matches": [
+        "*://www.marktplaats.nl/seller/view/*"
+      ],
+      "js": ["content_scripts/seller_view_handler.js"],
       "run_at": "document_idle"
     },
     {
-      "matches": ["*://www.marktplaats.nl/v/plaats-advertentie*"],
+      "matches": [
+        "*://www.marktplaats.nl/v/verwijder-advertentie*",
+        "*://www.marktplaats.nl/*/verwijder*"
+      ],
+      "js": ["content_scripts/verwijder_advertentie.js"],
+      "run_at": "document_idle",
+      "exclude_matches": [
+        "*://www.marktplaats.nl/seller/view/*"
+      ]
+    },
+    {
+      "matches": [
+        "*://www.marktplaats.nl/v/plaats-advertentie*",
+        "*://www.marktplaats.nl/seller/post/*"
+      ],
       "js": ["content_scripts/plaats_advertentie.js"],
       "run_at": "document_idle"
     }

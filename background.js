@@ -3,7 +3,10 @@
 // Dit is de hersenen van de extensie: beheert de State Machine
 // ============================================
 
-console.log('[Background] Marktplaats Herplaatser geïnitialiseerd');
+console.log('='.repeat(60));
+console.log('[Background] 🚀 Marktplaats Herplaatser geïnitialiseerd');
+console.log('[Background] Timestamp:', new Date().toISOString());
+console.log('='.repeat(60));
 
 // State Machine Status Constanten
 const STATUS = {
@@ -22,34 +25,93 @@ const STATUS = {
 // MESSAGE LISTENER - Luistert naar berichten van content scripts
 // ============================================
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  console.log('[Background] Bericht ontvangen:', message.action);
+  console.log('\n' + '='.repeat(60));
+  console.log('[Background] 📨 Bericht ontvangen!');
+  console.log('[Background] Action:', message.action);
+  console.log('[Background] Timestamp:', new Date().toISOString());
+  console.log('[Background] Sender tab ID:', sender.tab?.id);
+  console.log('[Background] Sender URL:', sender.tab?.url);
+  console.log('[Background] Volledige message:', JSON.stringify(message, null, 2));
+  console.log('='.repeat(60));
   
-  switch (message.action) {
-    case 'START_REPOST_PROCESS':
-      handleStartRepost(message.url, sender.tab.id);
-      break;
-      
-    case 'DATA_SCRAPED':
-      handleDataScraped(message.payload, sender.tab.id);
-      break;
-      
-    case 'DELETE_CONFIRMED':
-      handleDeleteConfirmed(sender.tab.id);
-      break;
-      
-    case 'STEP_COMPLETED':
-      handleStepCompleted(message.nextStatus, sender.tab.id);
-      break;
-      
-    case 'CLEANUP':
-      handleCleanup();
-      break;
-      
-    default:
-      console.warn('[Background] Onbekende actie:', message.action);
+  try {
+    switch (message.action) {
+      case 'START_REPOST_PROCESS':
+        console.log('[Background] ✅ START_REPOST_PROCESS gedetecteerd');
+        handleStartRepost(message.url, sender.tab.id)
+          .then(() => {
+            console.log('[Background] ✅ handleStartRepost voltooid');
+            sendResponse({ success: true, message: 'Repost process gestart' });
+          })
+          .catch(error => {
+            console.error('[Background] ❌ Fout in handleStartRepost:', error);
+            sendResponse({ success: false, error: error.message });
+          });
+        break;
+        
+      case 'DATA_SCRAPED':
+        console.log('[Background] ✅ DATA_SCRAPED gedetecteerd');
+        handleDataScraped(message.payload, sender.tab.id)
+          .then(() => {
+            console.log('[Background] ✅ handleDataScraped voltooid');
+            sendResponse({ success: true });
+          })
+          .catch(error => {
+            console.error('[Background] ❌ Fout in handleDataScraped:', error);
+            sendResponse({ success: false, error: error.message });
+          });
+        break;
+        
+      case 'DELETE_CONFIRMED':
+        console.log('[Background] ✅ DELETE_CONFIRMED gedetecteerd');
+        handleDeleteConfirmed(sender.tab.id)
+          .then(() => {
+            console.log('[Background] ✅ handleDeleteConfirmed voltooid');
+            sendResponse({ success: true });
+          })
+          .catch(error => {
+            console.error('[Background] ❌ Fout in handleDeleteConfirmed:', error);
+            sendResponse({ success: false, error: error.message });
+          });
+        break;
+        
+      case 'STEP_COMPLETED':
+        console.log('[Background] ✅ STEP_COMPLETED gedetecteerd');
+        handleStepCompleted(message.nextStatus, sender.tab.id)
+          .then(() => {
+            console.log('[Background] ✅ handleStepCompleted voltooid');
+            sendResponse({ success: true });
+          })
+          .catch(error => {
+            console.error('[Background] ❌ Fout in handleStepCompleted:', error);
+            sendResponse({ success: false, error: error.message });
+          });
+        break;
+        
+      case 'CLEANUP':
+        console.log('[Background] ✅ CLEANUP gedetecteerd');
+        handleCleanup()
+          .then(() => {
+            console.log('[Background] ✅ handleCleanup voltooid');
+            sendResponse({ success: true });
+          })
+          .catch(error => {
+            console.error('[Background] ❌ Fout in handleCleanup:', error);
+            sendResponse({ success: false, error: error.message });
+          });
+        break;
+        
+      default:
+        console.warn('[Background] ⚠️ Onbekende actie:', message.action);
+        sendResponse({ success: false, error: 'Onbekende actie' });
+    }
+  } catch (error) {
+    console.error('[Background] ❌ KRITIEKE FOUT in message listener:', error);
+    sendResponse({ success: false, error: error.message });
   }
   
-  return true; // Async response support
+  // Return true voor async response support
+  return true;
 });
 
 // ============================================
@@ -57,22 +119,38 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // Initialiseert een nieuwe herplaatsing-workflow
 // ============================================
 async function handleStartRepost(adUrl, tabId) {
-  console.log('[Background] Start herplaatsing voor:', adUrl);
+  console.log('\n[Background] 🎬 START REPOST PROCESS');
+  console.log('[Background] Ad URL:', adUrl);
+  console.log('[Background] Tab ID:', tabId);
   
-  // Initialiseer de repost job in storage
-  const repostJob = {
-    status: STATUS.SCRAPING_DETAILS,
-    adUrl: adUrl,
-    adData: null,
-    imageData_base64: [],
-    tabId: tabId,
-    startTime: Date.now()
-  };
-  
-  await chrome.storage.local.set({ repostJob });
-  
-  // Navigeer naar de advertentie detailpagina
-  chrome.tabs.update(tabId, { url: adUrl });
+  try {
+    // Initialiseer de repost job in storage
+    const repostJob = {
+      status: STATUS.SCRAPING_DETAILS,
+      adUrl: adUrl,
+      adData: null,
+      imageData_base64: [],
+      tabId: tabId,
+      startTime: Date.now()
+    };
+    
+    console.log('[Background] Sla repost job op in storage...');
+    await chrome.storage.local.set({ repostJob });
+    console.log('[Background] ✅ Repost job opgeslagen:', repostJob);
+    
+    // Verificatie: lees het terug
+    const verification = await chrome.storage.local.get('repostJob');
+    console.log('[Background] 📋 Verificatie - opgeslagen data:', verification.repostJob);
+    
+    // Navigeer naar de advertentie detailpagina
+    console.log('[Background] 🔄 Navigeer naar advertentie pagina:', adUrl);
+    await chrome.tabs.update(tabId, { url: adUrl });
+    console.log('[Background] ✅ Navigatie gestart');
+    
+  } catch (error) {
+    console.error('[Background] ❌ FOUT in handleStartRepost:', error);
+    throw error;
+  }
 }
 
 // ============================================
@@ -80,32 +158,40 @@ async function handleStartRepost(adUrl, tabId) {
 // Verwerkt gescrapete advertentiegegevens en download afbeeldingen
 // ============================================
 async function handleDataScraped(adData, tabId) {
-  console.log('[Background] Data ontvangen, start afbeeldingen downloaden');
+  console.log('\n[Background] 📊 DATA SCRAPED');
   console.log('[Background] Advertentietitel:', adData.title);
   console.log('[Background] Aantal afbeeldingen:', adData.imageUrls?.length || 0);
+  console.log('[Background] Tab ID:', tabId);
   
   try {
     // Download en converteer alle afbeeldingen naar Base64
+    console.log('[Background] Start downloaden van afbeeldingen...');
     const imageData_base64 = await downloadAndConvertImages(adData.imageUrls || []);
+    console.log('[Background] ✅ Afbeeldingen gedownload:', imageData_base64.length);
     
     // Update de repost job met de data en afbeeldingen
     const { repostJob } = await chrome.storage.local.get('repostJob');
+    
+    if (!repostJob) {
+      throw new Error('Geen actieve repost job gevonden in storage');
+    }
+    
     repostJob.adData = adData;
     repostJob.imageData_base64 = imageData_base64;
     repostJob.status = STATUS.PENDING_DELETE;
     
     await chrome.storage.local.set({ repostJob });
+    console.log('[Background] ✅ Data opgeslagen, status:', repostJob.status);
     
-    console.log('[Background] Data opgeslagen, navigeer naar verwijder-pagina');
-    
-    // Navigeer naar de verwijder-pagina
-    // Hypothetische URL - pas aan naar de werkelijke Marktplaats structuur
-    const deleteUrl = adData.deleteUrl || `${adData.adUrl}/verwijderen`;
-    chrome.tabs.update(tabId, { url: deleteUrl });
+    // BELANGRIJK: Herlaad de pagina zodat het seller_view_handler script
+    // de nieuwe status (PENDING_DELETE) oppikt en de verwijdering start
+    console.log('[Background] 🔄 Herlaad pagina om delete proces te starten...');
+    await chrome.tabs.reload(tabId);
     
   } catch (error) {
-    console.error('[Background] Fout bij verwerken data:', error);
-    await handleError('Fout bij downloaden afbeeldingen');
+    console.error('[Background] ❌ FOUT in handleDataScraped:', error);
+    await handleError('Fout bij downloaden afbeeldingen: ' + error.message);
+    throw error;
   }
 }
 
@@ -114,17 +200,25 @@ async function handleDataScraped(adData, tabId) {
 // Fetcht afbeeldingen en converteert ze naar Base64
 // ============================================
 async function downloadAndConvertImages(imageUrls) {
-  console.log('[Background] Start downloaden van', imageUrls.length, 'afbeeldingen');
+  console.log('\n[Background] 📥 DOWNLOAD IMAGES');
+  console.log('[Background] Aantal afbeeldingen:', imageUrls.length);
+  
   const base64Images = [];
   
   for (let i = 0; i < imageUrls.length; i++) {
     const url = imageUrls[i];
-    console.log(`[Background] Download afbeelding ${i + 1}/${imageUrls.length}`);
+    console.log(`[Background] Download afbeelding ${i + 1}/${imageUrls.length}:`, url);
     
     try {
       // Fetch de afbeelding
       const response = await fetch(url);
+      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      
       const blob = await response.blob();
+      console.log(`[Background] Blob ontvangen: ${blob.type}, ${Math.round(blob.size / 1024)}KB`);
       
       // Converteer blob naar Base64
       const base64 = await blobToBase64(blob);
@@ -135,15 +229,15 @@ async function downloadAndConvertImages(imageUrls) {
         size: blob.size
       });
       
-      console.log(`[Background] Afbeelding ${i + 1} geconverteerd (${blob.type}, ${Math.round(blob.size / 1024)}KB)`);
+      console.log(`[Background] ✅ Afbeelding ${i + 1} geconverteerd`);
       
     } catch (error) {
-      console.error(`[Background] Fout bij downloaden afbeelding ${url}:`, error);
+      console.error(`[Background] ❌ Fout bij afbeelding ${i + 1}:`, error);
       // Ga door met de volgende afbeelding
     }
   }
   
-  console.log('[Background] Alle afbeeldingen gedownload:', base64Images.length);
+  console.log(`[Background] ✅ Totaal gedownload: ${base64Images.length}/${imageUrls.length}`);
   return base64Images;
 }
 
@@ -165,14 +259,29 @@ function blobToBase64(blob) {
 // Verwerkt bevestiging van verwijdering
 // ============================================
 async function handleDeleteConfirmed(tabId) {
-  console.log('[Background] Verwijdering bevestigd, start nieuw plaatsen');
+  console.log('\n[Background] 🗑️ DELETE CONFIRMED');
+  console.log('[Background] Tab ID:', tabId);
   
-  const { repostJob } = await chrome.storage.local.get('repostJob');
-  repostJob.status = STATUS.POSTING_STEP_1_DETAILS;
-  await chrome.storage.local.set({ repostJob });
-  
-  // Navigeer naar het plaats-advertentie formulier
-  chrome.tabs.update(tabId, { url: 'https://www.marktplaats.nl/v/plaats-advertentie' });
+  try {
+    const { repostJob } = await chrome.storage.local.get('repostJob');
+    
+    if (!repostJob) {
+      throw new Error('Geen actieve repost job gevonden');
+    }
+    
+    repostJob.status = STATUS.POSTING_STEP_1_DETAILS;
+    await chrome.storage.local.set({ repostJob });
+    console.log('[Background] ✅ Status geüpdatet naar:', repostJob.status);
+    
+    // Navigeer naar het plaats-advertentie formulier
+    const postUrl = 'https://www.marktplaats.nl/v/plaats-advertentie';
+    console.log('[Background] 🔄 Navigeer naar plaats-advertentie:', postUrl);
+    await chrome.tabs.update(tabId, { url: postUrl });
+    
+  } catch (error) {
+    console.error('[Background] ❌ FOUT in handleDeleteConfirmed:', error);
+    throw error;
+  }
 }
 
 // ============================================
@@ -180,11 +289,25 @@ async function handleDeleteConfirmed(tabId) {
 // Verwerkt voltooiing van een formulier-stap
 // ============================================
 async function handleStepCompleted(nextStatus, tabId) {
-  console.log('[Background] Stap voltooid, update naar:', nextStatus);
+  console.log('\n[Background] ⏭️ STEP COMPLETED');
+  console.log('[Background] Nieuwe status:', nextStatus);
+  console.log('[Background] Tab ID:', tabId);
   
-  const { repostJob } = await chrome.storage.local.get('repostJob');
-  repostJob.status = nextStatus;
-  await chrome.storage.local.set({ repostJob });
+  try {
+    const { repostJob } = await chrome.storage.local.get('repostJob');
+    
+    if (!repostJob) {
+      throw new Error('Geen actieve repost job gevonden');
+    }
+    
+    repostJob.status = nextStatus;
+    await chrome.storage.local.set({ repostJob });
+    console.log('[Background] ✅ Status geüpdatet');
+    
+  } catch (error) {
+    console.error('[Background] ❌ FOUT in handleStepCompleted:', error);
+    throw error;
+  }
 }
 
 // ============================================
@@ -192,10 +315,24 @@ async function handleStepCompleted(nextStatus, tabId) {
 // Ruimt de repost job op na voltooiing
 // ============================================
 async function handleCleanup() {
-  console.log('[Background] Cleanup: verwijder repost job');
+  console.log('\n[Background] 🧹 CLEANUP');
   
-  await chrome.storage.local.remove('repostJob');
-  console.log('[Background] Herplaatsing voltooid!');
+  try {
+    const { repostJob } = await chrome.storage.local.get('repostJob');
+    
+    if (repostJob) {
+      const duration = Date.now() - repostJob.startTime;
+      console.log('[Background] Herplaatsing duur:', Math.round(duration / 1000), 'seconden');
+    }
+    
+    await chrome.storage.local.remove('repostJob');
+    console.log('[Background] ✅ Repost job verwijderd');
+    console.log('[Background] 🎉 HERPLAATSING VOLTOOID!');
+    
+  } catch (error) {
+    console.error('[Background] ❌ FOUT in handleCleanup:', error);
+    throw error;
+  }
 }
 
 // ============================================
@@ -203,14 +340,21 @@ async function handleCleanup() {
 // Behandelt fouten en reset de state
 // ============================================
 async function handleError(errorMessage) {
-  console.error('[Background] ERROR:', errorMessage);
+  console.error('\n[Background] ⚠️ ERROR HANDLER');
+  console.error('[Background] Error:', errorMessage);
   
-  // Optioneel: bewaar de fout in storage voor debugging
-  const { repostJob } = await chrome.storage.local.get('repostJob');
-  if (repostJob) {
-    repostJob.error = errorMessage;
-    repostJob.status = 'ERROR';
-    await chrome.storage.local.set({ repostJob });
+  try {
+    const { repostJob } = await chrome.storage.local.get('repostJob');
+    
+    if (repostJob) {
+      repostJob.error = errorMessage;
+      repostJob.status = 'ERROR';
+      repostJob.errorTime = Date.now();
+      await chrome.storage.local.set({ repostJob });
+      console.log('[Background] ✅ Error opgeslagen in storage');
+    }
+  } catch (error) {
+    console.error('[Background] ❌ Kon error niet opslaan:', error);
   }
 }
 
@@ -227,16 +371,29 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   if (!repostJob || repostJob.tabId !== tabId) return;
   
   const currentUrl = tab.url || '';
-  console.log('[Background] Pagina geladen:', currentUrl, 'Status:', repostJob.status);
+  console.log('\n[Background] 📄 Pagina geladen');
+  console.log('[Background] URL:', currentUrl);
+  console.log('[Background] Status:', repostJob.status);
   
   // State machine navigatie logica
-  // Deze listener zorgt ervoor dat de juiste acties worden uitgevoerd
-  // na elke pagina-navigatie, afhankelijk van de huidige status
-  
-  // Voorbeeld: Als we wachten op verwijdering en de URL bevat 'verwijderd' of 'success'
   if (repostJob.status === STATUS.PENDING_DELETE && 
       (currentUrl.includes('verwijderd') || currentUrl.includes('success'))) {
-    console.log('[Background] Verwijdering succesvol, start plaatsen');
+    console.log('[Background] 🎯 Verwijdering succesvol gedetecteerd, start plaatsen');
     await handleDeleteConfirmed(tabId);
   }
 });
+
+// ============================================
+// INSTALLATIE LISTENER
+// Logt wanneer de extensie geïnstalleerd/geüpdatet wordt
+// ============================================
+chrome.runtime.onInstalled.addListener((details) => {
+  console.log('\n' + '='.repeat(60));
+  console.log('[Background] 🎉 Extensie geïnstalleerd/geüpdatet');
+  console.log('[Background] Reden:', details.reason);
+  console.log('[Background] Versie:', chrome.runtime.getManifest().version);
+  console.log('='.repeat(60));
+});
+
+console.log('[Background] ✅ Alle event listeners geregistreerd');
+console.log('[Background] 👂 Wachtend op berichten...\n');
