@@ -1,6 +1,7 @@
 // ============================================
 // PLAATS ADVERTENTIE - FORM FILLER
 // Vult het advertentieformulier in op /plaats pagina
+// BESTAND: content_scripts/plaats_advertentie.js
 // ============================================
 
 console.log('='.repeat(60));
@@ -449,8 +450,8 @@ async function convertBase64ToFiles(imageData) {
 
 // ============================================
 // FILL DESCRIPTION
-// Vult de beschrijving in de RichTextEditor (Lexical editor)
-// Gebruikt type simulatie voor maximale compatibiliteit
+// Vult de beschrijving - SIMPELE METHODE
+// Gebruikt direct value setter zonder chunks
 // ============================================
 async function fillDescription(description) {
   console.log('[Plaats] 📝 Vul beschrijving in (', description.length, 'karakters)');
@@ -474,91 +475,98 @@ async function fillDescription(description) {
   
   console.log('[Plaats] ✅ Editor gevonden');
   
-  // METHODE: Simuleer typing (werkt het beste voor Lexical)
+  // Focus op editor
   editor.focus();
   await sleep(500);
   
-  // Clear bestaande content
+  // VOLLEDIG LEEGMAKEN - AGRESSIEF
+  console.log('[Plaats] 🧹 Clear alle content...');
   editor.innerHTML = '';
   editor.textContent = '';
+  editor.innerText = '';
+  
+  // Selecteer alles en verwijder
+  const selection = window.getSelection();
+  const range = document.createRange();
+  range.selectNodeContents(editor);
+  selection.removeAllRanges();
+  selection.addRange(range);
+  document.execCommand('delete', false);
+  
+  await sleep(300);
+  
+  // Check of echt leeg
+  console.log('[Plaats] 📋 Na clearen - innerHTML:', editor.innerHTML);
+  console.log('[Plaats] 📋 Na clearen - textContent:', editor.textContent);
+  
+  // Focus opnieuw
+  editor.focus();
   await sleep(200);
   
-  // Plaats cursor aan het begin
-  const range = document.createRange();
-  const selection = window.getSelection();
+  // Plaats cursor aan begin
   range.selectNodeContents(editor);
-  range.collapse(true);
   selection.removeAllRanges();
   selection.addRange(range);
   
   await sleep(200);
   
-  // Type de tekst karakter voor karakter (snelle simulatie)
-  // Voor lange teksten: gebruik chunks
-  const chunkSize = 50;
-  const chunks = [];
+  // METHODE 1: Probeer insertText in ÉÉN keer (geen chunks!)
+  console.log('[Plaats] 📝 Methode 1: Gebruik insertText...');
+  const success = document.execCommand('insertText', false, description);
+  console.log('[Plaats] insertText success:', success);
   
-  for (let i = 0; i < description.length; i += chunkSize) {
-    chunks.push(description.substring(i, i + chunkSize));
-  }
+  // Trigger input event
+  editor.dispatchEvent(new InputEvent('input', {
+    bubbles: true,
+    cancelable: true,
+    inputType: 'insertText',
+    data: null
+  }));
   
-  console.log('[Plaats] 📝 Typ beschrijving in', chunks.length, 'chunks...');
-  
-  for (let i = 0; i < chunks.length; i++) {
-    const chunk = chunks[i];
-    
-    // Gebruik insertText voor elke chunk
-    document.execCommand('insertText', false, chunk);
-    
-    // Trigger input event
-    editor.dispatchEvent(new InputEvent('input', {
-      bubbles: true,
-      cancelable: true,
-      inputType: 'insertText',
-      data: chunk
-    }));
-    
-    // Kleine pauze tussen chunks
-    if (i < chunks.length - 1) {
-      await sleep(50);
-    }
-  }
-  
-  console.log('[Plaats] ✅ Tekst getypt');
-  
-  await sleep(300);
+  await sleep(500);
   
   // Verificatie
   const currentContent = editor.textContent || editor.innerText || '';
-  console.log('[Plaats] 📋 Huidige editor content lengte:', currentContent.length);
+  console.log('[Plaats] 📋 Content lengte na insertText:', currentContent.length);
   console.log('[Plaats] 📋 Verwachte lengte:', description.length);
-  console.log('[Plaats] 📋 Preview:', currentContent.substring(0, 100) + '...');
   
-  if (currentContent.length > 0) {
-    console.log('[Plaats] ✅ Beschrijving ingevuld');
-  } else {
-    console.error('[Plaats] ❌ Beschrijving is nog steeds leeg!');
+  if (currentContent.length > 0 && currentContent.length === description.length) {
+    console.log('[Plaats] ✅ Beschrijving succesvol ingevuld met insertText');
     
-    // Laatste noodpoging: gebruik innerHTML met formatted text
-    console.log('[Plaats] 🔄 Noodpoging met innerHTML...');
-    const formattedText = description.replace(/\n/g, '<br>');
-    editor.innerHTML = `<p>${formattedText}</p>`;
-    
-    editor.dispatchEvent(new Event('input', { bubbles: true }));
+    // Trigger final events
     editor.dispatchEvent(new Event('change', { bubbles: true }));
-    
-    await sleep(500);
-    
-    const finalContent = editor.textContent || '';
-    console.log('[Plaats] 📋 Na noodpoging lengte:', finalContent.length);
+    editor.blur();
+    return;
   }
   
-  // Trigger final change event
-  editor.dispatchEvent(new Event('change', { bubbles: true }));
-  editor.dispatchEvent(new Event('blur', { bubbles: true }));
+  // METHODE 2: Als insertText faalde, gebruik textContent
+  console.log('[Plaats] ⚠️ insertText faalde, probeer textContent...');
   
-  // Blur
+  // Clear opnieuw
+  editor.innerHTML = '';
+  editor.textContent = '';
   await sleep(200);
+  
+  // Set via textContent
+  editor.textContent = description;
+  
+  // Trigger events
+  editor.dispatchEvent(new Event('input', { bubbles: true }));
+  editor.dispatchEvent(new Event('change', { bubbles: true }));
+  
+  await sleep(500);
+  
+  const finalContent = editor.textContent || '';
+  console.log('[Plaats] 📋 Content lengte na textContent:', finalContent.length);
+  
+  if (finalContent.length > 0) {
+    console.log('[Plaats] ✅ Beschrijving ingevuld met textContent');
+  } else {
+    console.error('[Plaats] ❌ Beide methodes faalden!');
+  }
+  
+  // Final trigger
+  editor.dispatchEvent(new Event('change', { bubbles: true }));
   editor.blur();
 }
 
@@ -585,33 +593,6 @@ async function selectPriceType(priceType) {
   select.dispatchEvent(new Event('change', { bubbles: true }));
   
   console.log('[Plaats] ✅ Prijstype geselecteerd: Zie omschrijving');
-}
-
-// ============================================
-// FILL PRICE
-// Vult de prijs in
-// ============================================
-async function fillPrice(price) {
-  console.log('[Plaats] 💵 Vul prijs in:', price);
-  
-  // Zoek prijs input veld
-  const priceInput = document.querySelector('input[type="text"][name*="price"], input[id*="price"]');
-  
-  if (!priceInput) {
-    console.error('[Plaats] ❌ Prijs input niet gevonden');
-    return;
-  }
-  
-  priceInput.focus();
-  await sleep(100);
-  
-  priceInput.value = price;
-  priceInput.dispatchEvent(new Event('input', { bubbles: true }));
-  priceInput.dispatchEvent(new Event('change', { bubbles: true }));
-  
-  priceInput.blur();
-  
-  console.log('[Plaats] ✅ Prijs ingevuld');
 }
 
 // ============================================

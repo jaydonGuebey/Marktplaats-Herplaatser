@@ -62,19 +62,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           });
         break;
         
-      case 'DELETE_CONFIRMED':
-        console.log('[Background] ✅ DELETE_CONFIRMED gedetecteerd');
-        handleDeleteConfirmed(sender.tab.id)
-          .then(() => {
-            console.log('[Background] ✅ handleDeleteConfirmed voltooid');
-            sendResponse({ success: true });
-          })
-          .catch(error => {
-            console.error('[Background] ❌ Fout in handleDeleteConfirmed:', error);
-            sendResponse({ success: false, error: error.message });
-          });
-        break;
-        
       case 'STEP_COMPLETED':
         console.log('[Background] ✅ STEP_COMPLETED gedetecteerd');
         handleStepCompleted(message.nextStatus, sender.tab.id)
@@ -255,11 +242,11 @@ function blobToBase64(blob) {
 }
 
 // ============================================
-// DELETE CONFIRMED
+// DELETE CONFIRMED (Nu aangeroepen door onUpdated listener)
 // Verwerkt bevestiging van verwijdering
 // ============================================
 async function handleDeleteConfirmed(tabId) {
-  console.log('\n[Background] 🗑️ DELETE CONFIRMED');
+  console.log('\n[Background] 🗑️ DELETE CONFIRMED (via URL detectie)');
   console.log('[Background] Tab ID:', tabId);
   
   try {
@@ -268,6 +255,14 @@ async function handleDeleteConfirmed(tabId) {
     if (!repostJob) {
       throw new Error('Geen actieve repost job gevonden');
     }
+
+    // === BELANGRIJKE CHECK ===
+    // Voorkom dat deze functie 2x wordt uitgevoerd
+    // Alleen doorgaan als de status nog PENDING_DELETE is.
+    if (repostJob.status !== STATUS.PENDING_DELETE) {
+        console.log('[Background] ⚠️ Delete al verwerkt, navigatie wordt genegeerd.');
+        return;
+    }
     
     // Update status VOOR navigatie
     repostJob.status = STATUS.POSTING_STEP_1_DETAILS;
@@ -275,24 +270,29 @@ async function handleDeleteConfirmed(tabId) {
     console.log('[Background] ✅ Status geüpdatet naar:', repostJob.status);
     
     // Wacht even om zeker te zijn dat de status opgeslagen is
-    await new Promise(resolve => setTimeout(resolve, 500));
+    await new Promise(resolve => setTimeout(resolve, 200)); 
     
     // Navigeer naar het plaats-advertentie formulier
     // Gebruik de DIRECTE Marktplaats URL
     const postUrl = 'https://www.marktplaats.nl/plaats';
     console.log('[Background] 🔄 Navigeer naar plaats-advertentie:', postUrl);
     
+    // === GECORRIGEERDE LOGICA (GEEN NIEUW TABBLAD) ===
     try {
       await chrome.tabs.update(tabId, { url: postUrl });
-      console.log('[Background] ✅ Navigatie gelukt');
+      console.log('[Background] ✅ Navigatie gelukt in bestaand tabblad.');
     } catch (navError) {
-      console.error('[Background] ❌ Navigatie fout:', navError);
-      // Probeer een nieuwe tab te openen als fallback
-      console.log('[Background] 🔄 Probeer nieuwe tab...');
-      const newTab = await chrome.tabs.create({ url: postUrl });
-      repostJob.tabId = newTab.id;
-      await chrome.storage.local.set({ repostJob });
-      console.log('[Background] ✅ Nieuwe tab geopend:', newTab.id);
+      console.error('[Background] ❌ Navigatie fout in bestaand tabblad:', navError);
+      console.log('[Background] 🔄 Probeer het opnieuw na 1 seconde...');
+      // Probeer het na een korte vertraging opnieuw, voor het geval de tab nog 'locked' was.
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      try {
+          await chrome.tabs.update(tabId, { url: postUrl });
+          console.log('[Background] ✅ Navigatie gelukt (2e poging).');
+      } catch (e2) {
+          console.error('[Background] ❌ Navigatie mislukt (2e poging):', e2);
+          // Geef het op, maar open GEEN nieuw tabblad.
+      }
     }
     
   } catch (error) {
@@ -376,27 +376,41 @@ async function handleError(errorMessage) {
 }
 
 // ============================================
-// TAB UPDATE LISTENER
+// TAB UPDATE LISTENER (GECORRIGEERD)
 // Monitort pagina-navigatie voor state machine management
 // ============================================
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
-  // Alleen reageren op complete page loads
-  if (changeInfo.status !== 'complete') return;
+  // === GECORRIGEERDE LOGICA ===
+  // We wachten NIET op 'complete'. We checken elke update.
+  // We gebruiken changeInfo.url omdat tab.url verouderd kan zijn.
   
+  const urlToCheck = changeInfo.url || tab.url;
+  if (!urlToCheck) return;
+
   // Check of er een actieve repost job is
   const { repostJob } = await chrome.storage.local.get('repostJob');
+  
+  // Snel filteren: alleen doorgaan als er een job is voor deze tab
   if (!repostJob || repostJob.tabId !== tabId) return;
-  
-  const currentUrl = tab.url || '';
-  console.log('\n[Background] 📄 Pagina geladen');
-  console.log('[Background] URL:', currentUrl);
-  console.log('[Background] Status:', repostJob.status);
-  
-  // State machine navigatie logica
+
+  // Log alleen als de URL daadwerkelijk verandert, om spam te voorkomen
+  if (changeInfo.url) {
+      console.log('\n[Background] 📄 Pagina update gedetecteerd');
+      console.log('[Background] URL:', changeInfo.url);
+      console.log('[Background] Status:', repostJob.status);
+  }
+
+  // === NIEUWE LOGICA ===
+  // Dit is nu de ENIGE manier om het plaatsen te starten na verwijdering.
+  // We reageren onmiddellijk op de URL, zelfs als 'status' nog 'loading' is.
   if (repostJob.status === STATUS.PENDING_DELETE && 
-      (currentUrl.includes('verwijderd') || currentUrl.includes('success'))) {
-    console.log('[Background] 🎯 Verwijdering succesvol gedetecteerd, start plaatsen');
-    await handleDeleteConfirmed(tabId);
+      urlToCheck.includes('my-account/sell') &&
+      urlToCheck.includes('previousAction=deleteAdSuccess')) {
+    
+    console.log('[Background] 🎯 Verwijdering succesvol gedetecteerd (via URL)!');
+    console.log('[Background] 🚀 Start plaats-advertentie proces...');
+    // We roepen de functie aan, maar hoeven er niet op te wachten
+    handleDeleteConfirmed(tabId);
   }
 });
 

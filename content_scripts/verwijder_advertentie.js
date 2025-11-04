@@ -129,7 +129,6 @@ async function clickDeleteButton() {
     'button.hz-Button--destructive.deleteButton',
     'button.deleteButton',
     'button[class*="deleteButton"]',
-    
     // Algemene patterns
     'button[class*="Delete"]',
     'button[class*="delete"]',
