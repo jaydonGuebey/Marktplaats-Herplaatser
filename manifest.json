@@ -54,6 +54,7 @@
     },
     {
       "matches": [
+        "*://www.marktplaats.nl/plaats*",
         "*://www.marktplaats.nl/v/plaats-advertentie*",
         "*://www.marktplaats.nl/seller/post/*"
       ],

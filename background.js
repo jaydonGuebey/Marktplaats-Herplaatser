@@ -269,14 +269,31 @@ async function handleDeleteConfirmed(tabId) {
       throw new Error('Geen actieve repost job gevonden');
     }
     
+    // Update status VOOR navigatie
     repostJob.status = STATUS.POSTING_STEP_1_DETAILS;
     await chrome.storage.local.set({ repostJob });
     console.log('[Background] ✅ Status geüpdatet naar:', repostJob.status);
     
+    // Wacht even om zeker te zijn dat de status opgeslagen is
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
     // Navigeer naar het plaats-advertentie formulier
-    const postUrl = 'https://www.marktplaats.nl/v/plaats-advertentie';
+    // Gebruik de DIRECTE Marktplaats URL
+    const postUrl = 'https://www.marktplaats.nl/plaats';
     console.log('[Background] 🔄 Navigeer naar plaats-advertentie:', postUrl);
-    await chrome.tabs.update(tabId, { url: postUrl });
+    
+    try {
+      await chrome.tabs.update(tabId, { url: postUrl });
+      console.log('[Background] ✅ Navigatie gelukt');
+    } catch (navError) {
+      console.error('[Background] ❌ Navigatie fout:', navError);
+      // Probeer een nieuwe tab te openen als fallback
+      console.log('[Background] 🔄 Probeer nieuwe tab...');
+      const newTab = await chrome.tabs.create({ url: postUrl });
+      repostJob.tabId = newTab.id;
+      await chrome.storage.local.set({ repostJob });
+      console.log('[Background] ✅ Nieuwe tab geopend:', newTab.id);
+    }
     
   } catch (error) {
     console.error('[Background] ❌ FOUT in handleDeleteConfirmed:', error);

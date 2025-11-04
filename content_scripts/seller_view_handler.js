@@ -115,7 +115,7 @@ async function handleDeleting(repostJob) {
   
   // STAP 2: Wacht actief op modal
   console.log('[SellerView] ⏳ Wacht op modal...');
-  const modal = await waitForModal(7); // Verhoog naar 7 seconden
+  const modal = await waitForModal(7);
   
   if (!modal) {
     console.error('[SellerView] ❌ Modal niet gevonden na 7 seconden!');
@@ -125,15 +125,25 @@ async function handleDeleting(repostJob) {
     const button = findModalButtonDirect();
     if (button) {
       console.log('[SellerView] ✅ Knop gevonden via backup methode!');
-      button.click();
-      await sleep(2000);
       
-      console.log('[SellerView] 📤 Stuur DELETE_CONFIRMED...');
-      await chrome.runtime.sendMessage({
-        action: 'DELETE_CONFIRMED'
-      });
+      // BELANGRIJK: Stuur DELETE_CONFIRMED VOOR de klik
+      console.log('[SellerView] 📤 Stuur DELETE_CONFIRMED VOOR klik...');
+      try {
+        const response = await chrome.runtime.sendMessage({
+          action: 'DELETE_CONFIRMED'
+        });
+        console.log('[SellerView] ✅ DELETE_CONFIRMED verzonden:', response);
+      } catch (error) {
+        console.error('[SellerView] ❌ Fout bij versturen DELETE_CONFIRMED:', error);
+      }
+      
+      // Nu pas klikken
+      await sleep(500);
+      button.click();
       
       console.log('[SellerView] 🎉 Verwijdering voltooid (via backup)!');
+      console.log('[SellerView] ⏳ Wacht op redirect en navigatie...');
+      
       return;
     } else {
       console.error('[SellerView] ❌ Ook backup methode gefaald!');
@@ -167,18 +177,25 @@ async function handleDeleting(repostJob) {
     return;
   }
   
+  // STAP 4: Bevestig verwijdering VOOR de klik
+  console.log('[SellerView] 📤 Stuur DELETE_CONFIRMED VOOR klik...');
+  try {
+    const response = await chrome.runtime.sendMessage({
+      action: 'DELETE_CONFIRMED'
+    });
+    console.log('[SellerView] ✅ DELETE_CONFIRMED verzonden:', response);
+  } catch (error) {
+    console.error('[SellerView] ❌ Fout bij versturen DELETE_CONFIRMED:', error);
+  }
+  
+  // Wacht even om zeker te zijn
+  await sleep(500);
+  
   console.log('[SellerView] 🖱️ Klik op modal knop...');
   targetButton.click();
   
-  await sleep(2000);
-  
-  // STAP 4: Bevestig verwijdering
-  console.log('[SellerView] 📤 Stuur DELETE_CONFIRMED...');
-  await chrome.runtime.sendMessage({
-    action: 'DELETE_CONFIRMED'
-  });
-  
   console.log('[SellerView] 🎉 Verwijdering voltooid!');
+  console.log('[SellerView] ⏳ Wacht op redirect en navigatie...');
 }
 
 // ============================================
