@@ -25,75 +25,96 @@ const STATUS = {
 // MESSAGE LISTENER - Luistert naar berichten van content scripts
 // ============================================
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  console.log('\n' + '='.repeat(60));
-  console.log('[Background] 📨 Bericht ontvangen!');
-  console.log('[Background] Action:', message.action);
-  console.log('[Background] Timestamp:', new Date().toISOString());
-  console.log('[Background] Sender tab ID:', sender.tab?.id);
-  console.log('[Background] Sender URL:', sender.tab?.url);
-  console.log('[Background] Volledige message:', JSON.stringify(message, null, 2));
-  console.log('='.repeat(60));
   
   try {
-    switch (message.action) {
-      case 'START_REPOST_PROCESS':
-        console.log('[Background] ✅ START_REPOST_PROCESS gedetecteerd');
-        handleStartRepost(message.url, sender.tab.id)
-          .then(() => {
-            console.log('[Background] ✅ handleStartRepost voltooid');
-            sendResponse({ success: true, message: 'Repost process gestart' });
-          })
-          .catch(error => {
-            console.error('[Background] ❌ Fout in handleStartRepost:', error);
-            sendResponse({ success: false, error: error.message });
-          });
-        break;
-        
-      case 'DATA_SCRAPED':
-        console.log('[Background] ✅ DATA_SCRAPED gedetecteerd');
-        handleDataScraped(message.payload, sender.tab.id)
-          .then(() => {
-            console.log('[Background] ✅ handleDataScraped voltooid');
-            sendResponse({ success: true });
-          })
-          .catch(error => {
-            console.error('[Background] ❌ Fout in handleDataScraped:', error);
-            sendResponse({ success: false, error: error.message });
-          });
-        break;
-        
-      case 'STEP_COMPLETED':
-        console.log('[Background] ✅ STEP_COMPLETED gedetecteerd');
-        handleStepCompleted(message.nextStatus, sender.tab.id)
-          .then(() => {
-            console.log('[Background] ✅ handleStepCompleted voltooid');
-            sendResponse({ success: true });
-          })
-          .catch(error => {
-            console.error('[Background] ❌ Fout in handleStepCompleted:', error);
-            sendResponse({ success: false, error: error.message });
-          });
-        break;
-        
-      case 'CLEANUP':
-        console.log('[Background] ✅ CLEANUP gedetecteerd');
-        handleCleanup()
-          .then(() => {
-            console.log('[Background] ✅ handleCleanup voltooid');
-            sendResponse({ success: true });
-          })
-          .catch(error => {
-            console.error('[Background] ❌ Fout in handleCleanup:', error);
-            sendResponse({ success: false, error: error.message });
-          });
-        break;
-        
-      default:
-        console.warn('[Background] ⚠️ Onbekende actie:', message.action);
-        sendResponse({ success: false, error: 'Onbekende actie' });
+    // Speciale handling voor EXTENSION_TOGGLED
+    if (message.action === 'EXTENSION_TOGGLED') {
+      console.log('🔄 Extensie ' + (message.enabled ? 'ingeschakeld' : 'uitgeschakeld'));
+      
+      if (!message.enabled) {
+        // Clear alle jobs als extensie uitgeschakeld wordt
+        chrome.storage.local.remove(['repostJob', 'editCopyExecuted']);
+        console.log('🧹 Jobs gewist');
+      }
+      
+      sendResponse({ success: true });
+      return true;
     }
+    
+    // DEBUG_LOG altijd toestaan
+    if (message.action === 'DEBUG_LOG') {
+      console.log('[' + message.source + '] ' + message.message);
+      sendResponse({ success: true });
+      return true;
+    }
+    
+    // Check of extensie enabled is voor andere acties
+    chrome.storage.local.get(['extensionEnabled'], (result) => {
+      const isEnabled = result.extensionEnabled !== false; // Default = true
+      
+      if (!isEnabled) {
+        console.log('⛔ Extensie uitgeschakeld, negeer actie: ' + message.action);
+        sendResponse({ success: false, error: 'Extensie is uitgeschakeld' });
+        return;
+      }
+      
+      // Handel normale acties af
+      switch (message.action) {
+        case 'START_REPOST_PROCESS':
+          console.log('🎬 START: Herplaats proces gestart');
+          handleStartRepost(message.url, sender.tab.id)
+            .then(() => {
+              sendResponse({ success: true, message: 'Repost process gestart' });
+            })
+            .catch(error => {
+              console.error('[Background] ❌ Fout in handleStartRepost:', error);
+              sendResponse({ success: false, error: error.message });
+            });
+          break;
+          
+        case 'DATA_SCRAPED':
+          console.log('📊 STAP 1: Data gescraped');
+          handleDataScraped(message.payload, sender.tab.id)
+            .then(() => {
+              sendResponse({ success: true });
+            })
+            .catch(error => {
+              console.error('❌ Fout bij scrapen:', error.message);
+              sendResponse({ success: false, error: error.message });
+            });
+          break;
+          
+        case 'STEP_COMPLETED':
+          console.log('✅ Stap voltooid, ga naar volgende');
+          handleStepCompleted(message.nextStatus, sender.tab.id)
+            .then(() => {
+              sendResponse({ success: true });
+            })
+            .catch(error => {
+              console.error('❌ Fout bij stap:', error.message);
+              sendResponse({ success: false, error: error.message });
+            });
+          break;
+          
+        case 'CLEANUP':
+          console.log('🧹 Opruimen...');
+          handleCleanup()
+            .then(() => {
+              sendResponse({ success: true });
+            })
+            .catch(error => {
+              console.error('❌ Fout bij cleanup:', error.message);
+              sendResponse({ success: false, error: error.message });
+            });
+          break;
+          
+        default:
+          sendResponse({ success: false, error: 'Onbekende actie' });
+      }
+    });
+    
   } catch (error) {
-    console.error('[Background] ❌ KRITIEKE FOUT in message listener:', error);
+    console.error('❌ FOUT:', error.message);
     sendResponse({ success: false, error: error.message });
   }
   
@@ -106,12 +127,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // Initialiseert een nieuwe herplaatsing-workflow
 // ============================================
 async function handleStartRepost(adUrl, tabId) {
-  console.log('\n[Background] 🎬 START REPOST PROCESS');
-  console.log('[Background] Ad URL:', adUrl);
-  console.log('[Background] Tab ID:', tabId);
+  console.log('\n🎬 START: Herplaats proces gestart');
   
   try {
-    // Initialiseer de repost job in storage
+    await chrome.storage.local.clear();
+    
     const repostJob = {
       status: STATUS.SCRAPING_DETAILS,
       adUrl: adUrl,
@@ -121,21 +141,11 @@ async function handleStartRepost(adUrl, tabId) {
       startTime: Date.now()
     };
     
-    console.log('[Background] Sla repost job op in storage...');
     await chrome.storage.local.set({ repostJob });
-    console.log('[Background] ✅ Repost job opgeslagen:', repostJob);
-    
-    // Verificatie: lees het terug
-    const verification = await chrome.storage.local.get('repostJob');
-    console.log('[Background] 📋 Verificatie - opgeslagen data:', verification.repostJob);
-    
-    // Navigeer naar de advertentie detailpagina
-    console.log('[Background] 🔄 Navigeer naar advertentie pagina:', adUrl);
     await chrome.tabs.update(tabId, { url: adUrl });
-    console.log('[Background] ✅ Navigatie gestart');
     
   } catch (error) {
-    console.error('[Background] ❌ FOUT in handleStartRepost:', error);
+    console.error('❌ FOUT in handleStartRepost:', error);
     throw error;
   }
 }

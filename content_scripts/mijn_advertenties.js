@@ -3,8 +3,21 @@
 // Injecteert "Herplaats" knoppen in de advertentielijst
 // ============================================
 
-console.log('[Mijn Advertenties] Script geladen');
-console.log('[Mijn Advertenties] URL:', window.location.href);
+// Log functie - stuurt ALLES naar background
+function log(message) {
+  console.log(message); // Ook lokaal
+  try {
+    chrome.runtime.sendMessage({
+      action: 'DEBUG_LOG',
+      source: 'MijnAds',
+      message: message
+    });
+  } catch (e) {
+    // Negeer fouten
+  }
+}
+
+log('📄 Script geladen op: ' + window.location.href);
 
 // Wacht tot de pagina volledig geladen is
 if (document.readyState === 'loading') {
@@ -13,9 +26,20 @@ if (document.readyState === 'loading') {
   init();
 }
 
-function init() {
-  console.log('[Mijn Advertenties] Initialiseer...');
-  console.log('[Mijn Advertenties] Document ready state:', document.readyState);
+async function init() {
+  log('[Mijn Advertenties] Initialiseer...');
+  
+  // Check of extensie enabled is
+  const { extensionEnabled } = await chrome.storage.local.get('extensionEnabled');
+  const isEnabled = extensionEnabled !== false; // Default = true
+  
+  if (!isEnabled) {
+    log('[Mijn Advertenties] ⛔ Extensie is uitgeschakeld, stop');
+    return;
+  }
+  
+  log('[Mijn Advertenties] ✅ Extensie is actief');
+  log('[Mijn Advertenties] Document ready state:', document.readyState);
   
   // Debug: Print de hele HTML structuur van de body
   debugPageStructure();
@@ -31,7 +55,7 @@ function init() {
 // Print nuttige informatie over de pagina structuur
 // ============================================
 function debugPageStructure() {
-  console.log('[DEBUG] ===== PAGINA STRUCTUUR ANALYSE =====');
+  log('[DEBUG] ===== PAGINA STRUCTUUR ANALYSE =====');
   
   // Check voor veelvoorkomende container elementen
   const possibleContainers = [
@@ -47,35 +71,35 @@ function debugPageStructure() {
   possibleContainers.forEach(selector => {
     const el = document.querySelector(selector);
     if (el) {
-      console.log(`[DEBUG] ✅ Container gevonden: ${selector}`);
-      console.log(`[DEBUG] Children count:`, el.children.length);
-      console.log(`[DEBUG] innerHTML preview:`, el.innerHTML.substring(0, 500));
+      log(`[DEBUG] ✅ Container gevonden: ${selector}`);
+      log(`[DEBUG] Children count:`, el.children.length);
+      log(`[DEBUG] innerHTML preview:`, el.innerHTML.substring(0, 500));
     }
   });
   
   // Check alle elementen met 'ad' of 'listing' in de class
   const adElements = document.querySelectorAll('[class*="ad"], [class*="listing"]');
-  console.log(`[DEBUG] Elementen met 'ad' of 'listing' in class:`, adElements.length);
+  log(`[DEBUG] Elementen met 'ad' of 'listing' in class:`, adElements.length);
   
   if (adElements.length > 0) {
-    console.log('[DEBUG] Eerste 5 elementen:');
+    log('[DEBUG] Eerste 5 elementen:');
     Array.from(adElements).slice(0, 5).forEach((el, i) => {
-      console.log(`[DEBUG] ${i + 1}. Tag: ${el.tagName}, Class: ${el.className}, ID: ${el.id}`);
+      log(`[DEBUG] ${i + 1}. Tag: ${el.tagName}, Class: ${el.className}, ID: ${el.id}`);
     });
   }
   
   // Check voor links naar advertenties
   const adLinks = document.querySelectorAll('a[href*="/a/"], a[href*="/v/"]');
-  console.log(`[DEBUG] Advertentie links gevonden:`, adLinks.length);
+  log(`[DEBUG] Advertentie links gevonden:`, adLinks.length);
   
   if (adLinks.length > 0) {
-    console.log('[DEBUG] Eerste 3 links:');
+    log('[DEBUG] Eerste 3 links:');
     Array.from(adLinks).slice(0, 3).forEach((link, i) => {
-      console.log(`[DEBUG] ${i + 1}. Href: ${link.href}, Text: ${link.textContent.substring(0, 50)}`);
+      log(`[DEBUG] ${i + 1}. Href: ${link.href}, Text: ${link.textContent.substring(0, 50)}`);
     });
   }
   
-  console.log('[DEBUG] ===== EINDE ANALYSE =====');
+  log('[DEBUG] ===== EINDE ANALYSE =====');
 }
 
 // ============================================
@@ -83,13 +107,13 @@ function debugPageStructure() {
 // Probeert meerdere strategieën om advertenties te vinden
 // ============================================
 function waitForAds() {
-  console.log('[Mijn Advertenties] Start zoeken naar advertenties...');
+  log('[Mijn Advertenties] Start zoeken naar advertenties...');
   
   // STRATEGIE 1: Zoek via bekende selectors
   const adElements = findAdsWithKnownSelectors();
   
   if (adElements && adElements.length > 0) {
-    console.log(`[Mijn Advertenties] ✅ Strategie 1 succesvol: ${adElements.length} advertenties gevonden`);
+    log(`[Mijn Advertenties] ✅ Strategie 1 succesvol: ${adElements.length} advertenties gevonden`);
     injectRepostButtons(adElements);
     return;
   }
@@ -98,13 +122,13 @@ function waitForAds() {
   const adsViaLinks = findAdsViaLinks();
   
   if (adsViaLinks && adsViaLinks.length > 0) {
-    console.log(`[Mijn Advertenties] ✅ Strategie 2 succesvol: ${adsViaLinks.length} advertenties gevonden`);
+    log(`[Mijn Advertenties] ✅ Strategie 2 succesvol: ${adsViaLinks.length} advertenties gevonden`);
     injectRepostButtons(adsViaLinks);
     return;
   }
   
   // STRATEGIE 3: Gebruik MutationObserver
-  console.log('[Mijn Advertenties] Strategieën 1 & 2 gefaald, start observer');
+  log('[Mijn Advertenties] Strategieën 1 & 2 gefaald, start observer');
   observeForAds();
 }
 
@@ -140,7 +164,7 @@ function findAdsWithKnownSelectors() {
     try {
       const elements = document.querySelectorAll(selector);
       if (elements.length > 0) {
-        console.log(`[Mijn Advertenties] ✅ Selector succesvol: "${selector}" (${elements.length} items)`);
+        log(`[Mijn Advertenties] ✅ Selector succesvol: "${selector}" (${elements.length} items)`);
         return elements;
       }
     } catch (e) {
@@ -148,7 +172,7 @@ function findAdsWithKnownSelectors() {
     }
   }
   
-  console.log('[Mijn Advertenties] ❌ Geen advertenties gevonden met bekende selectors');
+  log('[Mijn Advertenties] ❌ Geen advertenties gevonden met bekende selectors');
   return null;
 }
 
@@ -157,17 +181,17 @@ function findAdsWithKnownSelectors() {
 // Zoekt advertentie-containers op basis van links
 // ============================================
 function findAdsViaLinks() {
-  console.log('[Mijn Advertenties] Strategie 2: Zoek via advertentie links');
+  log('[Mijn Advertenties] Strategie 2: Zoek via advertentie links');
   
   // Zoek alle links naar advertenties
   const adLinks = document.querySelectorAll('a[href*="/a/"], a[href*="/v/"]');
   
   if (adLinks.length === 0) {
-    console.log('[Mijn Advertenties] Geen advertentie links gevonden');
+    log('[Mijn Advertenties] Geen advertentie links gevonden');
     return null;
   }
   
-  console.log(`[Mijn Advertenties] ${adLinks.length} advertentie links gevonden`);
+  log(`[Mijn Advertenties] ${adLinks.length} advertentie links gevonden`);
   
   // Vind de containers van deze links
   const adContainers = new Set();
@@ -191,7 +215,7 @@ function findAdsViaLinks() {
   });
   
   if (adContainers.size > 0) {
-    console.log(`[Mijn Advertenties] ✅ ${adContainers.size} advertentie containers gevonden`);
+    log(`[Mijn Advertenties] ✅ ${adContainers.size} advertentie containers gevonden`);
     return Array.from(adContainers);
   }
   
@@ -208,13 +232,13 @@ function observeForAds() {
   
   const observer = new MutationObserver(() => {
     attempts++;
-    console.log(`[Mijn Advertenties] Observer poging ${attempts}/${maxAttempts}`);
+    log(`[Mijn Advertenties] Observer poging ${attempts}/${maxAttempts}`);
     
     // Probeer advertenties te vinden
     const ads = findAdsWithKnownSelectors() || findAdsViaLinks();
     
     if (ads && ads.length > 0) {
-      console.log(`[Mijn Advertenties] ✅ Observer succesvol na ${attempts} pogingen`);
+      log(`[Mijn Advertenties] ✅ Observer succesvol na ${attempts} pogingen`);
       injectRepostButtons(ads);
       observer.disconnect();
       return;
@@ -222,8 +246,8 @@ function observeForAds() {
     
     if (attempts >= maxAttempts) {
       observer.disconnect();
-      console.error('[Mijn Advertenties] ❌ Observer timeout - geen advertenties gevonden');
-      console.log('[Mijn Advertenties] 💡 Open de browser console en bekijk de DEBUG logs hierboven');
+      log('[Mijn Advertenties] ❌ Observer timeout - geen advertenties gevonden');
+      log('[Mijn Advertenties] 💡 Open de browser console en bekijk de DEBUG logs hierboven');
     }
   });
   
@@ -233,7 +257,7 @@ function observeForAds() {
     subtree: true
   });
   
-  console.log('[Mijn Advertenties] Observer gestart (max 10 seconden)');
+  log('[Mijn Advertenties] Observer gestart (max 10 seconden)');
 }
 
 // ============================================
@@ -241,14 +265,14 @@ function observeForAds() {
 // Voegt een "Herplaats" knop toe aan elke advertentie
 // ============================================
 function injectRepostButtons(adElements) {
-  console.log('[Mijn Advertenties] 🔧 Start injectie in', adElements.length, 'advertenties');
+  log('[Mijn Advertenties] 🔧 Start injectie in', adElements.length, 'advertenties');
   
   let successCount = 0;
   
   adElements.forEach((adElement, index) => {
     // Check of de knop al bestaat
     if (adElement.querySelector('.herplaats-button-injected')) {
-      console.log(`[Mijn Advertenties] ⏭️ Ad ${index + 1}: knop al aanwezig`);
+      log(`[Mijn Advertenties] ⏭️ Ad ${index + 1}: knop al aanwezig`);
       return;
     }
     
@@ -256,11 +280,11 @@ function injectRepostButtons(adElements) {
     const adUrl = extractAdUrl(adElement);
     if (!adUrl) {
       console.warn(`[Mijn Advertenties] ⚠️ Ad ${index + 1}: Geen URL gevonden`);
-      console.log('[Mijn Advertenties] Element HTML:', adElement.outerHTML.substring(0, 300));
+      log('[Mijn Advertenties] Element HTML:', adElement.outerHTML.substring(0, 300));
       return;
     }
     
-    console.log(`[Mijn Advertenties] ✅ Ad ${index + 1}: ${adUrl}`);
+    log(`[Mijn Advertenties] ✅ Ad ${index + 1}: ${adUrl}`);
     
     // Creëer de Herplaats knop
     const button = createRepostButton(adUrl);
@@ -273,7 +297,7 @@ function injectRepostButtons(adElements) {
     }
   });
   
-  console.log(`[Mijn Advertenties] ✨ ${successCount}/${adElements.length} knoppen succesvol geïnjecteerd!`);
+  log(`[Mijn Advertenties] ✨ ${successCount}/${adElements.length} knoppen succesvol geïnjecteerd!`);
 }
 
 // ============================================
@@ -303,7 +327,7 @@ function injectButton(adElement, button) {
     const container = getLocation();
     if (container) {
       container.appendChild(button);
-      console.log('[Mijn Advertenties] 📍 Knop geïnjecteerd');
+      log('[Mijn Advertenties] 📍 Knop geïnjecteerd');
       return true;
     }
   }
@@ -317,7 +341,7 @@ function injectButton(adElement, button) {
 // Haalt de advertentie URL uit een advertentie element
 // ============================================
 function extractAdUrl(adElement) {
-  console.log('[Mijn Advertenties] 🔍 Zoek URL in element...');
+  log('[Mijn Advertenties] 🔍 Zoek URL in element...');
   
   // Methode 1: Element ID (bijv. ad-listing-row-m2329920609)
   const elementId = adElement.id;
@@ -325,14 +349,14 @@ function extractAdUrl(adElement) {
     const idMatch = elementId.match(/[m]?\d{10,}/);
     if (idMatch) {
       const adId = idMatch[0];
-      console.log(`[Mijn Advertenties] 🔍 Ad ID uit element ID: ${adId}`);
+      log(`[Mijn Advertenties] 🔍 Ad ID uit element ID: ${adId}`);
       
       // Zoek volledige URL in links
       const linkWithUrl = adElement.querySelector('a[href*="/a/"], a[href*="/v/"]');
       if (linkWithUrl) {
         const href = linkWithUrl.getAttribute('href');
         const fullUrl = href.startsWith('http') ? href : `https://www.marktplaats.nl${href}`;
-        console.log(`[Mijn Advertenties] 🔗 Volledige URL gevonden: ${fullUrl}`);
+        log(`[Mijn Advertenties] 🔗 Volledige URL gevonden: ${fullUrl}`);
         return fullUrl;
       }
       
@@ -347,7 +371,7 @@ function extractAdUrl(adElement) {
                   adElement.getAttribute('data-href');
   
   if (dataUrl) {
-    console.log(`[Mijn Advertenties] 🔗 URL uit data attribuut: ${dataUrl}`);
+    log(`[Mijn Advertenties] 🔗 URL uit data attribuut: ${dataUrl}`);
     return dataUrl.startsWith('http') ? dataUrl : `https://www.marktplaats.nl${dataUrl}`;
   }
   
@@ -357,7 +381,7 @@ function extractAdUrl(adElement) {
     const href = link.getAttribute('href');
     if (href && (href.includes('/a/') || href.includes('/v/'))) {
       const fullUrl = href.startsWith('http') ? href : `https://www.marktplaats.nl${href}`;
-      console.log(`[Mijn Advertenties] 🔗 URL uit link: ${fullUrl}`);
+      log(`[Mijn Advertenties] 🔗 URL uit link: ${fullUrl}`);
       return fullUrl;
     }
   }
@@ -415,8 +439,8 @@ function createRepostButton(adUrl) {
     e.preventDefault();
     e.stopPropagation();
     
-    console.log('[Mijn Advertenties] 🖱️ Herplaats knop geklikt!');
-    console.log('[Mijn Advertenties] URL:', adUrl);
+    log('[Mijn Advertenties] 🖱️ Herplaats knop geklikt!');
+    log('[Mijn Advertenties] URL:', adUrl);
     
     // Verander knop naar loading state
     button.disabled = true;
@@ -425,14 +449,14 @@ function createRepostButton(adUrl) {
     button.style.cursor = 'not-allowed';
     
     try {
-      console.log('[Mijn Advertenties] 📤 Probeer bericht te versturen naar background script...');
+      log('[Mijn Advertenties] 📤 Probeer bericht te versturen naar background script...');
       
       // Check of chrome.runtime beschikbaar is
       if (!chrome || !chrome.runtime) {
         throw new Error('Chrome runtime API niet beschikbaar');
       }
       
-      console.log('[Mijn Advertenties] Chrome runtime beschikbaar, verstuur bericht...');
+      log('[Mijn Advertenties] Chrome runtime beschikbaar, verstuur bericht...');
       
       // Stuur bericht met timeout
       const response = await Promise.race([
@@ -445,22 +469,22 @@ function createRepostButton(adUrl) {
         )
       ]);
       
-      console.log('[Mijn Advertenties] ✅ Bericht verstuurd!');
-      console.log('[Mijn Advertenties] Response:', response);
+      log('[Mijn Advertenties] ✅ Bericht verstuurd!');
+      log('[Mijn Advertenties] Response:', response);
       
       button.textContent = '✅ Gestart!';
       button.style.background = '#10b981';
       
       // Herlaad na 2 seconden om het proces te laten starten
       setTimeout(() => {
-        console.log('[Mijn Advertenties] Navigeer naar advertentie pagina...');
+        log('[Mijn Advertenties] Navigeer naar advertentie pagina...');
       }, 2000);
       
     } catch (error) {
-      console.error('[Mijn Advertenties] ❌ FOUT bij versturen bericht:', error);
-      console.error('[Mijn Advertenties] Error naam:', error.name);
-      console.error('[Mijn Advertenties] Error bericht:', error.message);
-      console.error('[Mijn Advertenties] Error stack:', error.stack);
+      log('[Mijn Advertenties] ❌ FOUT bij versturen bericht:', error);
+      log('[Mijn Advertenties] Error naam:', error.name);
+      log('[Mijn Advertenties] Error bericht:', error.message);
+      log('[Mijn Advertenties] Error stack:', error.stack);
       
       button.disabled = false;
       button.textContent = '❌ Fout';
@@ -476,9 +500,9 @@ function createRepostButton(adUrl) {
       }, 3000);
     }
   });
-  
+  // 
   container.appendChild(button);
   return container;
 }
 
-console.log('[Mijn Advertenties] Script volledig geladen en klaar');
+log('[Mijn Advertenties] Script volledig geladen en klaar');

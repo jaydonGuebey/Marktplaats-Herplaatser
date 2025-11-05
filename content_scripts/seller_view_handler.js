@@ -3,11 +3,21 @@
 // Combineert scraping EN verwijdering op de /seller/view/ pagina
 // ============================================
 
-console.log('='.repeat(60));
-console.log('[SellerView] 📄 Script geladen!');
-console.log('[SellerView] URL:', window.location.href);
-console.log('[SellerView] Timestamp:', new Date().toISOString());
-console.log('='.repeat(60));
+// Log functie - stuurt ALLES naar background
+function log(message) {
+  console.log(message); // Ook lokaal
+  try {
+    chrome.runtime.sendMessage({
+      action: 'DEBUG_LOG',
+      source: 'SellerView',
+      message: message
+    });
+  } catch (e) {
+    // Negeer fouten
+  }
+}
+
+log('📄 Script geladen op: ' + window.location.href);
 
 // Wacht tot pagina geladen is
 if (document.readyState === 'loading') {
@@ -18,17 +28,30 @@ if (document.readyState === 'loading') {
 
 async function init() {
   try {
-    console.log('[SellerView] 🔍 Check wat we moeten doen...');
+    log('[SellerView] 🔍 Check wat we moeten doen...');
     
-    const { repostJob } = await chrome.storage.local.get('repostJob');
+    // Check of extensie enabled is
+    const { extensionEnabled } = await chrome.storage.local.get('extensionEnabled');
+    const isEnabled = extensionEnabled !== false; // Default = true
     
-    console.log('[SellerView] Storage check:', {
+    if (!isEnabled) {
+      log('[SellerView] ⛔ Extensie is uitgeschakeld, stop');
+      return;
+    }
+    
+    // CRITICAL FIX: Haal BEIDE keys op uit storage
+    const storage = await chrome.storage.local.get(['repostJob', 'editCopyExecuted']);
+    const repostJob = storage.repostJob;
+    const editCopyExecuted = storage.editCopyExecuted;
+    
+    log('[SellerView] Storage check:', {
       hasJob: !!repostJob,
-      status: repostJob?.status
+      status: repostJob?.status,
+      editCopyExecuted: editCopyExecuted
     });
     
     if (!repostJob) {
-      console.log('[SellerView] ⏭️ Geen repost job - script stopt');
+      log('[SellerView] ⏭️ Geen repost job - script stopt');
       return;
     }
     
@@ -37,27 +60,45 @@ async function init() {
     
     // Route naar juiste actie op basis van status
     if (repostJob.status === 'SCRAPING_DETAILS') {
-      console.log('[SellerView] 📊 Start SCRAPING...');
-      await handleScraping(repostJob);
+      // CRUCIALE FIX: Check of we al de edit page copy hebben gedaan
+      if (editCopyExecuted) {
+        log('[SellerView] ✅ Edit page copy al gedaan (flag gevonden), skip navigatie');
+        log('[SellerView] 📊 Continue met REST van SCRAPING...');
+        // Voer ALLEEN scraping uit, niet de edit page navigatie
+        await continueScrapingAfterEditCopy(repostJob);
+      } else {
+        log('[SellerView] 📊 Start SCRAPING (incl. edit page copy)...');
+        await handleScraping(repostJob);
+      }
+    } else if (repostJob.status === 'COPYING_DESCRIPTION') {
+      log('[SellerView] ⏭️ Status is COPYING_DESCRIPTION - we navigeren momenteel naar edit pagina, skip');
+      return;
     } else if (repostJob.status === 'PENDING_DELETE') {
-      console.log('[SellerView] 🗑️ Start DELETING...');
+      log('[SellerView] 🗑️ Start DELETING...');
       await handleDeleting(repostJob);
     } else {
-      console.log('[SellerView] ⏭️ Verkeerde status:', repostJob.status);
+      log('[SellerView] ⏭️ Verkeerde status:', repostJob.status);
     }
     
   } catch (error) {
-    console.error('[SellerView] ❌ FOUT:', error);
-    console.error('[SellerView] Stack:', error.stack);
+    log('[SellerView] ❌ FOUT:', error);
+    log('[SellerView] Stack:', error.stack);
   }
 }
 
 // ============================================
-// HANDLE SCRAPING
-// Scrape advertentie data
+// CONTINUE SCRAPING AFTER EDIT COPY
+// Scrape advertentie data ZONDER naar edit pagina te gaan (we zijn net teruggekomen)
 // ============================================
-async function handleScraping(repostJob) {
-  console.log('[SellerView] 📋 SCRAPING MODE');
+async function continueScrapingAfterEditCopy(repostJob) {
+  log('[SellerView] CONTINUE SCRAPING (edit copy al gedaan)');
+  
+  // Clear de flag zodat volgende repost fris begint
+  await chrome.storage.local.remove('editCopyExecuted');
+  log('[SellerView] FLAG CLEARED: editCopyExecuted verwijderd');
+  
+  // STAP 2: Scrape alle data (editorText zit nu in storage via plaats_advertentie.js)
+  log('[SellerView] STAP 2: Scrape advertentie data');
   
   // Import scraping functies (kopieer ze hieronder)
   const adData = {
@@ -74,20 +115,155 @@ async function handleScraping(repostJob) {
     scrapedAt: new Date().toISOString()
   };
   
-  console.log('[SellerView] ✅ Scraping voltooid:', {
+  log('[SellerView] Scraping voltooid:', {
     title: adData.title,
     price: adData.price?.raw,
     images: adData.imageUrls?.length
   });
   
+  // STAP 3: Voeg editor beschrijving toe uit storage (als beschikbaar)
+  const { repostJob: updatedJob } = await chrome.storage.local.get('repostJob');
+  if (updatedJob?.adData?.description?.editorText) {
+    adData.description.editorText = updatedJob.adData.description.editorText;
+    log('[SellerView] Editor beschrijving toegevoegd uit storage');
+  }
+  
   // Stuur data naar background
-  console.log('[SellerView] 📤 Verstuur data...');
+  log('[SellerView] Verstuur data...');
   await chrome.runtime.sendMessage({
     action: 'DATA_SCRAPED',
     payload: adData
   });
   
-  console.log('[SellerView] ✅ Data verzonden, wacht op status update...');
+  log('[SellerView] Data verzonden, wacht op status update...');
+}
+
+// ============================================
+// HANDLE SCRAPING
+// Scrape advertentie data - EERST naar edit pagina voor beschrijving
+// ============================================
+async function handleScraping(repostJob) {
+  log('[SellerView] SCRAPING MODE');
+  
+  // RESET: Clear de editCopyExecuted flag zodat volgende keer kan opnieuw
+  await chrome.storage.local.remove('editCopyExecuted');
+  log('[SellerView] FLAG CLEARED: editCopyExecuted verwijderd');
+  
+  // ZEER BELANGRIJK: Verander de status VOOR navigatie naar edit pagina
+  // Dit voorkomt dat de functie 2x wordt uitgevoerd als we terugkomen
+  log('[SellerView] Update status naar COPYING_DESCRIPTION om loop te voorkomen');
+  repostJob.status = 'COPYING_DESCRIPTION';
+  await chrome.storage.local.set({ repostJob });
+  log('[SellerView] Status gewijzigd naar: COPYING_DESCRIPTION');
+  
+  // STAP 1: Navigeer naar edit pagina om beschrijving te kopieren
+  log('[SellerView] STAP 1: Navigeer naar edit pagina voor beschrijving');
+  const navigationSuccess = await navigateToEditPageAndCopy();
+  
+  if (!navigationSuccess) {
+    console.warn('[SellerView] Navigatie naar edit pagina faalde, ga toch door');
+  }
+  
+  // OPMERKING: Status wordt TERUGGEZET naar SCRAPING_DETAILS door plaats_advertentie.js
+  // voordat het history.back() aanroept. Dus we checken hier gewoon de status.
+  const { repostJob: updatedRepostJob } = await chrome.storage.local.get('repostJob');
+  log('[SellerView] Status na kopieren:', updatedRepostJob?.status);
+  
+  // STAP 2: Scrape alle data (editorText zit nu in storage via plaats_advertentie.js)
+  log('[SellerView] STAP 2: Scrape advertentie data');
+  
+  // Import scraping functies (kopieer ze hieronder)
+  const adData = {
+    url: window.location.href,
+    title: scrapeTitle(),
+    description: scrapeDescription(),
+    price: scrapePrice(),
+    priceType: scrapePriceType(),
+    category: scrapeCategory(),
+    location: scrapeLocation(),
+    attributes: scrapeAttributes(),
+    imageUrls: scrapeImageUrls(),
+    deleteUrl: null, // Niet nodig, we blijven op deze pagina
+    scrapedAt: new Date().toISOString()
+  };
+  
+  log('[SellerView] Scraping voltooid:', {
+    title: adData.title,
+    price: adData.price?.raw,
+    images: adData.imageUrls?.length
+  });
+  
+  // STAP 3: Voeg editor beschrijving toe uit storage (als beschikbaar)
+  const { repostJob: updatedJob } = await chrome.storage.local.get('repostJob');
+  if (updatedJob?.adData?.description?.editorText) {
+    adData.description.editorText = updatedJob.adData.description.editorText;
+    log('[SellerView] Editor beschrijving toegevoegd uit storage');
+  }
+  
+  // Stuur data naar background
+  log('[SellerView] Verstuur data...');
+  await chrome.runtime.sendMessage({
+    action: 'DATA_SCRAPED',
+    payload: adData
+  });
+  
+  log('[SellerView] Data verzonden, wacht op status update...');
+}
+
+// ============================================
+// NAVIGATE TO EDIT PAGE AND COPY DESCRIPTION
+// Navigeert naar edit pagina, Ctrl+A/C, terug
+// ============================================
+async function navigateToEditPageAndCopy() {
+  try {
+    log('='.repeat(60));
+    log('[SellerView] NAVIGATE TO EDIT PAGE AND COPY');
+    log('[SellerView] Timestamp: ' + new Date().toISOString());
+    log('[SellerView] Huidige URL: ' + window.location.href);
+    log('='.repeat(60));
+    
+    // Lees ad ID uit de URL
+    log('[SellerView] STAP 1: Parse URL om ad ID te vinden...');
+    const urlMatch = window.location.href.match(/\/seller\/view\/([^\/]+)/);
+    
+    if (!urlMatch || !urlMatch[1]) {
+      log('[SellerView] STAP 1 FOUT: Kon ad ID niet uit URL halen');
+      log('[SellerView] URL: ' + window.location.href);
+      log('[SellerView] Regex match result: ' + JSON.stringify(urlMatch));
+      return false;
+    }
+    
+    const adId = urlMatch[1];
+    log('[SellerView] STAP 1 OK: Ad ID gevonden = ' + adId);
+    
+    // Bouw de edit URL
+    log('[SellerView] STAP 2: Bouw edit URL...');
+    const editUrl = `https://www.marktplaats.nl/plaats/${adId}/edit`;
+    log('[SellerView] STAP 2 OK: Edit URL = ' + editUrl);
+    
+    // Navigeer naar edit pagina
+    log('[SellerView] STAP 3: Navigeer naar edit pagina...');
+    log('[SellerView] STAP 3 DETAILS: Set window.location.href');
+    window.location.href = editUrl;
+    log('[SellerView] STAP 3 OK: Navigatie aangeroepen');
+    
+    // Wacht tot navigatie voltooid, Ctrl+A/C gedaan, en terug naar seller/view
+    log('[SellerView] STAP 4: Wacht 35 seconden op edit cycle...');
+    log('[SellerView] STAP 4 DETAILS: Dit omvat navigatie, Ctrl+A/C, history.back()');
+    await sleep(35000);
+    
+    log('[SellerView] STAP 4 OK: 35 seconden voorbij');
+    log('[SellerView] STAP 5: Check huidige URL na teruggaan...');
+    log('[SellerView] STAP 5 DETAILS: Huidige URL = ' + window.location.href);
+    log('[SellerView] ALLE STAPPEN VOLTOOID - TERUG OP SELLER/VIEW');
+    log('='.repeat(60));
+    
+    return true;
+  } catch (error) {
+    log('[SellerView] FOUT in navigateToEditPageAndCopy: ' + error.message);
+    log('[SellerView] Stack: ' + error.stack);
+    return false;
+  }
 }
 
 // ============================================
@@ -96,34 +272,34 @@ async function handleScraping(repostJob) {
 // Stuurt GEEN bericht, wacht op URL-detectie door background.js
 // ============================================
 async function handleDeleting(repostJob) {
-  console.log('[SellerView] 🗑️ DELETING MODE (Nieuwe strategie)');
+  log('[SellerView] DELETING MODE');
   
   // STAP 1: Klik op de hoofdpagina "Verwijder" knop
-  console.log('[SellerView] 🎯 STAP 1: Zoek en klik hoofd "Verwijder" knop...');
+  log('[SellerView] STAP 1: Zoek en klik hoofd "Verwijder" knop...');
   const deleteButton = findDeleteButton(); // We gebruiken de bestaande helper
   
   if (!deleteButton) {
-    console.error('[SellerView] ❌ Hoofd "Verwijder" knop niet gevonden!');
+    log('[SellerView] ❌ Hoofd "Verwijder" knop niet gevonden!');
     return;
   }
   
   deleteButton.scrollIntoView({ behavior: 'smooth', block: 'center' });
   await sleep(500);
   deleteButton.click();
-  console.log('[SellerView] ✅ Hoofdknop geklikt.');
+  log('[SellerView] ✅ Hoofdknop geklikt.');
 
   // STAP 2: Wacht tot de modal (pop-up) is verschenen
   // We wachten een vaste tijd (1.5s), omdat de zichtbaarheids-checks falen.
-  console.log('[SellerView] ⏳ Wacht 1.5 seconde op de modal...');
+  log('[SellerView] ⏳ Wacht 1.5 seconde op de modal...');
   await sleep(1500);
 
   // STAP 3: Zoek de "Niet verkocht" knop in het HELE document
-  console.log('[SellerView] 🎯 STAP 3: Zoek "Niet verkocht..." knop');
+  log('[SellerView] 🎯 STAP 3: Zoek "Niet verkocht..." knop');
   let targetButton = null;
   
   // Zoek alle knoppen op de pagina
   const allButtons = document.querySelectorAll('button');
-  console.log(`[SellerView] 🔍 Zoek door ${allButtons.length} knoppen...`);
+  log(`[SellerView] 🔍 Zoek door ${allButtons.length} knoppen...`);
 
   for (const button of allButtons) {
     const text = button.textContent.trim().toLowerCase();
@@ -133,34 +309,34 @@ async function handleDeleting(repostJob) {
     if (isSecondary && text.includes('niet verkocht')) {
         // Check of hij ook daadwerkelijk zichtbaar is (offsetParent is de beste check)
         if (button.offsetParent !== null) {
-            console.log('[SellerView] ✅ Target knop gevonden:', button.textContent.trim());
+            log('[SellerView] ✅ Target knop gevonden:', button.textContent.trim());
             targetButton = button;
             break; // Stop met zoeken
         } else {
-            console.log('[SellerView] ⚠️ Knop gevonden, maar nog niet zichtbaar:', text);
+            log('[SellerView] ⚠️ Knop gevonden, maar nog niet zichtbaar:', text);
             // We stoppen niet, misschien is er nog een? (Onwaarschijnlijk)
         }
     }
   }
 
   if (!targetButton) {
-    console.error('[SellerView] ❌ "Niet verkocht..." knop niet gevonden of was niet zichtbaar.');
+    log('[SellerView] ❌ "Niet verkocht..." knop niet gevonden of was niet zichtbaar.');
     return;
   }
 
   // STAP 4: Klik op de modal knop
-  console.log('[SellerView] 🎯 STAP 4: Klik op modal knop...');
+  log('[SellerView] 🎯 STAP 4: Klik op modal knop...');
   highlightElement(targetButton); // Highlight de knop
   await sleep(500);
   targetButton.click();
-  console.log('[SellerView] ✅ Modal knop geklikt.');
+  log('[SellerView] ✅ Modal knop geklikt.');
 
   // STAP 5: Wacht op verwerking
-  console.log('[SellerView] ⏳ Wacht 1.5 seconde op verwerking van de klik...');
+  log('[SellerView] ⏳ Wacht 1.5 seconde op verwerking van de klik...');
   await sleep(1500);
 
   // STAP 6: VERWIJDERD. We sturen geen bericht meer.
-  console.log('[SellerView] 🎉 Verwijdering voltooid! Wacht op URL-detectie door background.js...');
+  log('[SellerView] 🎉 Verwijdering voltooid! Wacht op URL-detectie door background.js...');
 }
 
 // ============================================
@@ -179,7 +355,7 @@ function findDeleteButton() {
   for (const selector of selectors) {
     const button = document.querySelector(selector);
     if (button) {
-      console.log('[SellerView] ✅ Delete button gevonden met:', selector);
+      log('[SellerView] ✅ Delete button gevonden met:', selector);
       return button;
     }
   }
@@ -188,7 +364,7 @@ function findDeleteButton() {
   const buttons = document.querySelectorAll('button');
   for (const button of buttons) {
     if (button.textContent.toLowerCase().includes('verwijder')) {
-      console.log('[SellerView] ✅ Delete button gevonden via tekst');
+      log('[SellerView] ✅ Delete button gevonden via tekst');
       return button;
     }
   }
@@ -302,8 +478,8 @@ function scrapeImageUrls() {
     }
   });
   
-  console.log('[SellerView] Afbeeldingen gevonden:', images.length);
+  log('[SellerView] Afbeeldingen gevonden:', images.length);
   return images;
 }
 
-console.log('[SellerView] ✅ Script klaar');
+log('[SellerView] ✅ Script klaar');

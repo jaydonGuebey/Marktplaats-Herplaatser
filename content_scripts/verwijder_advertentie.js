@@ -4,11 +4,21 @@
 // Handelt 2-staps proces: Verwijder knop → Modal keuze
 // ============================================
 
-console.log('='.repeat(60));
-console.log('[Verwijder] 🗑️ Script geladen!');
-console.log('[Verwijder] URL:', window.location.href);
-console.log('[Verwijder] Timestamp:', new Date().toISOString());
-console.log('='.repeat(60));
+// Log functie - stuurt ALLES naar background
+function log(message) {
+  console.log(message); // Ook lokaal
+  try {
+    chrome.runtime.sendMessage({
+      action: 'DEBUG_LOG',
+      source: 'Verwijder',
+      message: message
+    });
+  } catch (e) {
+    // Negeer fouten
+  }
+}
+
+log('📄 Script geladen op: ' + window.location.href);
 
 // Wacht tot pagina geladen is
 if (document.readyState === 'loading') {
@@ -16,30 +26,29 @@ if (document.readyState === 'loading') {
 } else {
   checkAndDelete();
 }
-
 // ============================================
 // CHECK EN DELETE
 // Controleert of we moeten verwijderen en start het proces
 // ============================================
 async function checkAndDelete() {
   try {
-    console.log('[Verwijder] 🔍 Check of we moeten verwijderen...');
+    log('[Verwijder] 🔍 Check of we moeten verwijderen...');
     
     // Check of we in de delete fase zitten
     const { repostJob } = await chrome.storage.local.get('repostJob');
     
-    console.log('[Verwijder] Storage check:', {
+    log('[Verwijder] Storage check:', {
       hasJob: !!repostJob,
       status: repostJob?.status
     });
     
     if (!repostJob || repostJob.status !== 'PENDING_DELETE') {
-      console.log('[Verwijder] ⏭️ Geen actieve delete job - script stopt');
+      log('[Verwijder] ⏭️ Geen actieve delete job - script stopt');
       return;
     }
     
-    console.log('[Verwijder] ✅ Actieve delete job gevonden!');
-    console.log('[Verwijder] ⏳ Wacht 1 seconde voor pagina...');
+    log('[Verwijder] ✅ Actieve delete job gevonden!');
+    log('[Verwijder] ⏳ Wacht 1 seconde voor pagina...');
     
     // Wacht even tot de pagina volledig geladen is
     await sleep(1000);
@@ -48,47 +57,47 @@ async function checkAndDelete() {
     debugDeletePage();
     
     // STAP 1: Klik op de "Verwijder" knop
-    console.log('[Verwijder] 🎯 STAP 1: Zoek en klik Verwijder knop...');
+    log('[Verwijder] 🎯 STAP 1: Zoek en klik Verwijder knop...');
     const deleteButtonClicked = await clickDeleteButton();
     
     if (!deleteButtonClicked) {
-      console.error('[Verwijder] ❌ Kon Verwijder knop niet vinden/klikken');
+      log('[Verwijder] ❌ Kon Verwijder knop niet vinden/klikken');
       return;
     }
     
-    console.log('[Verwijder] ✅ Verwijder knop geklikt!');
-    console.log('[Verwijder] ⏳ Wacht 1 seconde op modal...');
+    log('[Verwijder] ✅ Verwijder knop geklikt!');
+    log('[Verwijder] ⏳ Wacht 1 seconde op modal...');
     
     // Wacht tot modal verschijnt
     await sleep(1000);
     
     // STAP 2: Klik op modal keuze
-    console.log('[Verwijder] 🎯 STAP 2: Zoek en klik modal keuze...');
+    log('[Verwijder] 🎯 STAP 2: Zoek en klik modal keuze...');
     const modalClicked = await clickModalChoice();
     
     if (!modalClicked) {
-      console.error('[Verwijder] ❌ Kon modal keuze niet vinden/klikken');
+      log('[Verwijder] ❌ Kon modal keuze niet vinden/klikken');
       return;
     }
     
-    console.log('[Verwijder] ✅ Modal keuze geklikt!');
-    console.log('[Verwijder] ⏳ Wacht 2 seconden voor verwerking...');
+    log('[Verwijder] ✅ Modal keuze geklikt!');
+    log('[Verwijder] ⏳ Wacht 2 seconden voor verwerking...');
     
     // Wacht tot verwijdering verwerkt is
     await sleep(2000);
     
     // Stuur bevestiging naar background script
-    console.log('[Verwijder] 📤 Stuur DELETE_CONFIRMED naar background...');
+    log('[Verwijder] 📤 Stuur DELETE_CONFIRMED naar background...');
     const response = await chrome.runtime.sendMessage({
       action: 'DELETE_CONFIRMED'
     });
     
-    console.log('[Verwijder] ✅ Bevestiging verzonden:', response);
-    console.log('[Verwijder] 🎉 Verwijdering succesvol voltooid!');
+    log('[Verwijder] ✅ Bevestiging verzonden:', response);
+    log('[Verwijder] 🎉 Verwijdering succesvol voltooid!');
     
   } catch (error) {
-    console.error('[Verwijder] ❌ FOUT bij verwijderen:', error);
-    console.error('[Verwijder] Error stack:', error.stack);
+    log('[Verwijder] ❌ FOUT bij verwijderen:', error);
+    log('[Verwijder] Error stack:', error.stack);
   }
 }
 
@@ -97,23 +106,23 @@ async function checkAndDelete() {
 // Analyseert de verwijder pagina
 // ============================================
 function debugDeletePage() {
-  console.log('\n[Verwijder DEBUG] ===== PAGINA ANALYSE =====');
+  log('\n[Verwijder DEBUG] ===== PAGINA ANALYSE =====');
   
   // Zoek verwijder knoppen
   const deleteButtons = document.querySelectorAll('button[class*="delete"], button[class*="Delete"], .deleteButton');
-  console.log('[Verwijder DEBUG] Verwijder knoppen gevonden:', deleteButtons.length);
+  log('[Verwijder DEBUG] Verwijder knoppen gevonden:', deleteButtons.length);
   deleteButtons.forEach((btn, i) => {
-    console.log(`  [${i + 1}] Class: ${btn.className}, Text: ${btn.textContent.trim()}`);
+    log(`  [${i + 1}] Class: ${btn.className}, Text: ${btn.textContent.trim()}`);
   });
   
   // Zoek modals
   const modals = document.querySelectorAll('[class*="Modal"], [role="dialog"]');
-  console.log('[Verwijder DEBUG] Modals gevonden:', modals.length);
+  log('[Verwijder DEBUG] Modals gevonden:', modals.length);
   modals.forEach((modal, i) => {
-    console.log(`  [${i + 1}] Class: ${modal.className}, Visible: ${modal.offsetParent !== null}`);
+    log(`  [${i + 1}] Class: ${modal.className}, Visible: ${modal.offsetParent !== null}`);
   });
   
-  console.log('[Verwijder DEBUG] ===== EINDE ANALYSE =====\n');
+  log('[Verwijder DEBUG] ===== EINDE ANALYSE =====\n');
 }
 
 // ============================================
@@ -121,7 +130,7 @@ function debugDeletePage() {
 // Zoekt en klikt op de hoofdverwijder knop
 // ============================================
 async function clickDeleteButton() {
-  console.log('[Verwijder] 🔍 Zoek Verwijder knop...');
+  log('[Verwijder] 🔍 Zoek Verwijder knop...');
   
   // Selectors voor de verwijder knop
   const selectors = [
@@ -148,9 +157,9 @@ async function clickDeleteButton() {
       const isDeleteButton = text.includes('verwijder') || hasDeleteIcon;
       
       if (isDeleteButton) {
-        console.log('[Verwijder] ✅ Verwijder knop gevonden!');
-        console.log('[Verwijder] Class:', button.className);
-        console.log('[Verwijder] Text:', button.textContent.trim());
+        log('[Verwijder] ✅ Verwijder knop gevonden!');
+        log('[Verwijder] Class:', button.className);
+        log('[Verwijder] Text:', button.textContent.trim());
         
         // Scroll naar knop
         button.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -161,7 +170,7 @@ async function clickDeleteButton() {
         await sleep(300);
         
         // Klik op de knop
-        console.log('[Verwijder] 🖱️ Klik op knop...');
+        log('[Verwijder] 🖱️ Klik op knop...');
         button.click();
         
         // Extra: dispatch click events voor React
@@ -176,7 +185,7 @@ async function clickDeleteButton() {
     }
   }
   
-  console.error('[Verwijder] ❌ Geen verwijder knop gevonden');
+  log('[Verwijder] ❌ Geen verwijder knop gevonden');
   return false;
 }
 
@@ -185,25 +194,25 @@ async function clickDeleteButton() {
 // Klikt op een keuze in de verwijder modal
 // ============================================
 async function clickModalChoice() {
-  console.log('[Verwijder] 🔍 Zoek modal...');
+  log('[Verwijder] 🔍 Zoek modal...');
   
   // Wacht tot modal verschijnt
   const modal = await waitForModal();
   
   if (!modal) {
-    console.error('[Verwijder] ❌ Modal niet gevonden');
+    log('[Verwijder] ❌ Modal niet gevonden');
     return false;
   }
   
-  console.log('[Verwijder] ✅ Modal gevonden!');
-  console.log('[Verwijder] Modal class:', modal.className);
+  log('[Verwijder] ✅ Modal gevonden!');
+  log('[Verwijder] Modal class:', modal.className);
   
   // Zoek knoppen in de modal
   const buttons = modal.querySelectorAll('button');
-  console.log('[Verwijder] Knoppen in modal:', buttons.length);
+  log('[Verwijder] Knoppen in modal:', buttons.length);
   
   buttons.forEach((btn, i) => {
-    console.log(`  [${i + 1}] Text: "${btn.textContent.trim()}"`);
+    log(`  [${i + 1}] Text: "${btn.textContent.trim()}"`);
   });
   
   // Zoek de juiste knop
@@ -218,7 +227,7 @@ async function clickModalChoice() {
     
     if (isSecondary || text.includes('niet verkocht')) {
       targetButton = button;
-      console.log('[Verwijder] ✅ "Niet verkocht via Marktplaats" button gevonden:', button.textContent.trim());
+      log('[Verwijder] ✅ "Niet verkocht via Marktplaats" button gevonden:', button.textContent.trim());
       break;
     }
   }
@@ -226,11 +235,11 @@ async function clickModalChoice() {
   // Als nog steeds geen knop, neem gewoon de eerste button
   if (!targetButton && buttons.length > 0) {
     targetButton = buttons[0];
-    console.log('[Verwijder] ⚠️ Gebruik eerste button (fallback):', targetButton.textContent.trim());
+    log('[Verwijder] ⚠️ Gebruik eerste button (fallback):', targetButton.textContent.trim());
   }
   
   if (!targetButton) {
-    console.error('[Verwijder] ❌ Geen geschikte modal knop gevonden');
+    log('[Verwijder] ❌ Geen geschikte modal knop gevonden');
     return false;
   }
   
@@ -243,7 +252,7 @@ async function clickModalChoice() {
   await sleep(300);
   
   // Klik op de knop
-  console.log('[Verwijder] 🖱️ Klik op modal knop...');
+  log('[Verwijder] 🖱️ Klik op modal knop...');
   targetButton.click();
   
   // Extra: dispatch click events
@@ -261,7 +270,7 @@ async function clickModalChoice() {
 // Wacht tot de modal verschijnt (met timeout)
 // ============================================
 async function waitForModal(maxWait = 5000) {
-  console.log('[Verwijder] ⏳ Wacht op modal (max 5 sec)...');
+  log('[Verwijder] ⏳ Wacht op modal (max 5 sec)...');
   
   const startTime = Date.now();
   
@@ -280,7 +289,7 @@ async function waitForModal(maxWait = 5000) {
       
       // Check of modal zichtbaar is
       if (modal && modal.offsetParent !== null) {
-        console.log('[Verwijder] ✅ Modal verschenen!');
+        log('[Verwijder] ✅ Modal verschenen!');
         return modal;
       }
     }
@@ -288,7 +297,7 @@ async function waitForModal(maxWait = 5000) {
     await sleep(100);
   }
   
-  console.error('[Verwijder] ⏱️ Timeout: modal niet verschenen na 5 seconden');
+  log('[Verwijder] ⏱️ Timeout: modal niet verschenen na 5 seconden');
   return null;
 }
 
@@ -329,4 +338,4 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-console.log('[Verwijder] ✅ Script klaar, wachtend op DOMContentLoaded...');
+log('[Verwijder] ✅ Script klaar, wachtend op DOMContentLoaded...');

@@ -4,11 +4,94 @@
 // BESTAND: content_scripts/plaats_advertentie.js
 // ============================================
 
-console.log('='.repeat(60));
-console.log('[Plaats] 📄 Script geladen!');
-console.log('[Plaats] URL:', window.location.href);
-console.log('[Plaats] Timestamp:', new Date().toISOString());
-console.log('='.repeat(60));
+// Log functie - stuurt ALLES naar background
+function log(message) {
+  console.log(message); // Ook lokaal
+  try {
+    chrome.runtime.sendMessage({
+      action: 'DEBUG_LOG',
+      source: 'Plaats',
+      message: message
+    });
+  } catch (e) {
+    // Negeer fouten
+  }
+}
+
+log('📄 Script geladen op: ' + window.location.href);
+
+// ============================================
+// CONVERT HTML TO PLAIN TEXT MET STRUCTUUR
+// Converteert HTML naar platte tekst maar behoudt:
+// - Regelbreaks (enters) van <br>, <p>, </li>
+// - Bullet points (•) van <li>
+// - Bold (*tekst*) van <strong>, <b>
+// - Italic (_tekst_) van <em>, <i>
+// ============================================
+function htmlToPlainTextWithStructure(html) {
+  if (!html) return '';
+  
+  // Vervang HTML tags door newlines en tekst
+  let text = html;
+  
+  // <br> en <br/> en <br/> -> newline
+  text = text.replace(/<br\s*\/?>/gi, '\n');
+  
+  // </p> -> newline
+  text = text.replace(/<\/p>/gi, '\n');
+  
+  // <p> verwijderen
+  text = text.replace(/<p[^>]*>/gi, '');
+  
+  // </div> -> newline
+  text = text.replace(/<\/div>/gi, '\n');
+  
+  // <div> verwijderen
+  text = text.replace(/<div[^>]*>/gi, '');
+  
+  // <li> -> bullet point
+  text = text.replace(/<li[^>]*>/gi, '• ');
+  
+  // </li> -> newline
+  text = text.replace(/<\/li>/gi, '\n');
+  
+  // <ul> en </ul> verwijderen
+  text = text.replace(/<\/?ul[^>]*>/gi, '');
+  
+  // <ol> en </ol> verwijderen
+  text = text.replace(/<\/?ol[^>]*>/gi, '');
+  
+  // <strong> en <b> -> *tekst*
+  text = text.replace(/<strong[^>]*>/gi, '*');
+  text = text.replace(/<\/strong>/gi, '*');
+  text = text.replace(/<b[^>]*>/gi, '*');
+  text = text.replace(/<\/b>/gi, '*');
+  
+  // <em> en <i> -> _tekst_
+  text = text.replace(/<em[^>]*>/gi, '_');
+  text = text.replace(/<\/em>/gi, '_');
+  text = text.replace(/<i[^>]*>/gi, '_');
+  text = text.replace(/<\/i>/gi, '_');
+  
+  // HTML entities decoderen
+  text = text.replace(/&nbsp;/g, ' ');
+  text = text.replace(/&lt;/g, '<');
+  text = text.replace(/&gt;/g, '>');
+  text = text.replace(/&amp;/g, '&');
+  text = text.replace(/&quot;/g, '"');
+  text = text.replace(/&#39;/g, "'");
+  
+  // Verwijder overige HTML tags
+  text = text.replace(/<[^>]+>/g, '');
+  
+  // Clean up: dubbele newlines -> enkele newline
+  text = text.replace(/\n\n+/g, '\n');
+  
+  // Trim whitespace
+  text = text.trim();
+  
+  return text;
+}
 
 // Wacht tot pagina geladen is
 if (document.readyState === 'loading') {
@@ -23,51 +106,66 @@ if (document.readyState === 'loading') {
 // ============================================
 async function init() {
   try {
-    console.log('[Plaats] 🔍 Script init gestart...');
-    console.log('[Plaats] URL:', window.location.href);
-    console.log('[Plaats] ReadyState:', document.readyState);
+    log('🚀 INIT gestart');
+    log('🔗 URL: ' + window.location.href);
+    
+    // Check of extensie enabled is
+    const { extensionEnabled } = await chrome.storage.local.get('extensionEnabled');
+    const isEnabled = extensionEnabled !== false; // Default = true
+    
+    if (!isEnabled) {
+      log('⛔ Extensie is uitgeschakeld, stop');
+      return;
+    }
+    
+    // EERST: Check of we op een EDIT pagina zijn (van scraper via "Wijzig" knop)
+    if (window.location.href.includes('/plaats/') && window.location.href.includes('/edit')) {
+      log('✏️ EDIT page gedetecteerd');
+      
+      // CHECK: Hebben we dit al gedaan? Flag in storage voorkomen loop
+      const { editCopyExecuted } = await chrome.storage.local.get('editCopyExecuted');
+      if (editCopyExecuted) {
+        log('⚠️ Edit copy al uitgevoerd, skip');
+        return;
+      }
+      
+      log('📋 Start handleEditPageCopy...');
+      await handleEditPageCopy();
+      log('✅ handleEditPageCopy voltooid');
+      return;
+    }
     
     // Check of we in een actieve posting job zitten
     const { repostJob } = await chrome.storage.local.get('repostJob');
     
-    console.log('[Plaats] Storage check:', {
-      hasJob: !!repostJob,
-      status: repostJob?.status,
-      hasData: !!repostJob?.adData,
-      hasImages: !!repostJob?.imageData_base64
-    });
+    log('💾 Storage check: hasJob=' + !!repostJob + ' status=' + (repostJob?.status || 'geen'));
     
     if (!repostJob || !repostJob.status.startsWith('POSTING_')) {
-      console.log('[Plaats] ⏭️ Geen actieve posting job');
+      log('⛔ Geen actieve posting job (status: ' + (repostJob?.status || 'geen') + ')');
       return;
     }
     
-    console.log('[Plaats] ✅ Actieve posting job gevonden!');
-    console.log('[Plaats] 📋 Data:', {
-      title: repostJob.adData?.title,
-      price: repostJob.adData?.price?.raw,
-      images: repostJob.imageData_base64?.length,
-      description: repostJob.adData?.description?.text?.substring(0, 50) + '...'
-    });
+    log('✅ Actieve posting job gevonden: ' + repostJob.adData?.title);
+    log('📊 Images: ' + (repostJob.imageData_base64?.length || 0));
     
     // Wacht tot pagina volledig geladen is
-    console.log('[Plaats] ⏳ Wacht 2 seconden voor pagina...');
+    log('⏳ Wacht 2 seconden...');
     await sleep(2000);
     
     // Check welke pagina we hebben
     const isInitialPage = checkIfInitialPage();
     
     if (isInitialPage) {
-      console.log('[Plaats] 📝 Detectie: Initial /plaats pagina (categorie selectie)');
+      log('📝 Initial page (categorie selectie)');
       await handleInitialPage(repostJob);
     } else {
-      console.log('[Plaats] 📝 Detectie: Formulier pagina (details invullen)');
+      log('📝 Formulier page (details invullen)');
       await fillForm(repostJob);
     }
     
   } catch (error) {
-    console.error('[Plaats] ❌ FOUT in init:', error);
-    console.error('[Plaats] Stack:', error.stack);
+    log('❌ FOUT in init: ' + error.message);
+    console.error(error);
   }
 }
 
@@ -85,13 +183,160 @@ function checkIfInitialPage() {
   // Als we deze elementen hebben, zijn we op de initial page
   const isInitial = !!(titleInput && findCategoryButton);
   
-  console.log('[Plaats] Page check:', {
-    hasTitleInput: !!titleInput,
-    hasFindCategoryButton: !!findCategoryButton,
-    isInitial: isInitial
-  });
+  log('🔍 Page check: titleInput=' + !!titleInput + ' categoryBtn=' + !!findCategoryButton + ' isInitial=' + isInitial);
   
   return isInitial;
+}
+
+// ============================================
+// HANDLE EDIT PAGE COPY
+// Ctrl+A, Ctrl+C beschrijving en gaat terug
+// ============================================
+async function handleEditPageCopy() {
+  try {
+    // ZEER BELANGRIJK: Set flag om te voorkomen dat dit 2x wordt uitgevoerd
+    await chrome.storage.local.set({ editCopyExecuted: true });
+    log('[Plaats] FLAG SET: editCopyExecuted = true');
+    
+    log('='.repeat(60));
+    log('[Plaats] HANDLE EDIT PAGE COPY GESTART');
+    log('[Plaats] URL: ' + window.location.href);
+    log('[Plaats] Timestamp: ' + new Date().toISOString());
+    log('='.repeat(60));
+    
+    // Wacht tot editor geladen is EN bevat inhoud
+    log('[Plaats] STAP 1: Wacht tot editor met inhoud laadt...');
+    
+    let editorLoaded = false;
+    let attempts = 0;
+    const maxAttempts = 40; // 40 * 500ms = 20 seconden max
+    
+    while (!editorLoaded && attempts < maxAttempts) {
+      attempts++;
+      
+      // Zoek editor
+      const testEditor = document.querySelector('.RichTextEditor-module-editorInput[data-testid="text-editor-input_nl-NL"]');
+      if (testEditor) {
+        const content = testEditor.innerText || testEditor.textContent || '';
+        const contentLength = (content || '').trim().length;
+        
+        if (contentLength > 10) { // Meer dan 10 karakters = echte content
+          log('[Plaats] STAP 1 OK: Editor geladen met ' + contentLength + ' karakters (poging ' + attempts + ')');
+          editorLoaded = true;
+          break;
+        }
+      }
+      
+      await sleep(500); // Wacht 500ms en probeer opnieuw
+    }
+    
+    if (!editorLoaded) {
+      log('[Plaats] STAP 1 WAARSCHUWING: Editor laadde niet volledig, ga toch door');
+    }
+    
+    // Zoek de editor
+    log('[Plaats] STAP 2: Zoek editor element...');
+    const selectors = [
+      '.RichTextEditor-module-editorInput[data-testid="text-editor-input_nl-NL"]',
+      '.RichTextEditor-module-editorInput',
+      '[data-testid="text-editor-input_nl-NL"]',
+      '[contenteditable="true"]',
+      '.editor-input',
+      '[class*="editorInput"]'
+    ];
+    
+    let editor = null;
+    let foundSelector = null;
+    
+    for (const selector of selectors) {
+      const el = document.querySelector(selector);
+      log('[Plaats]   Probeer selector: ' + selector + ' -> Gevonden: ' + !!el);
+      if (el) {
+        editor = el;
+        foundSelector = selector;
+        break;
+      }
+    }
+    
+    if (!editor) {
+      log('[Plaats] STAP 2 FOUT: Editor niet gevonden');
+      return;
+    }
+    
+    log('[Plaats] STAP 2 OK: Editor gevonden');
+    log('[Plaats] STAP 2 DETAILS: Selector= ' + foundSelector);
+    
+    // Focus op editor
+    log('[Plaats] STAP 3: Focus op editor...');
+    editor.focus();
+    await sleep(300);
+    log('[Plaats] STAP 3 OK: Focus ingesteld');
+    
+    // Ctrl+A - Select all
+    log('[Plaats] STAP 4: Doe Ctrl+A (Select all)...');
+    document.execCommand('selectAll', false, null);
+    await sleep(300);
+    log('[Plaats] STAP 4 OK: Ctrl+A uitgevoerd');
+    
+    // Ctrl+C - Copy
+    log('[Plaats] STAP 5: Doe Ctrl+C (Copy)...');
+    document.execCommand('copy', false, null);
+    await sleep(500);
+    log('[Plaats] STAP 5 OK: Ctrl+C uitgevoerd');
+    
+    // Lees editor content
+    log('[Plaats] STAP 6: Lees editor content...');
+    let editorContent = editor.innerText || editor.textContent || '';
+    log('[Plaats] STAP 6 OK: Content gelezen');
+    log('[Plaats] STAP 6 DETAILS: Lengte= ' + editorContent.length);
+    log('[Plaats] STAP 6 PREVIEW: ' + editorContent.substring(0, 100));
+    
+    // Sla op in storage
+    log('[Plaats] STAP 7: Haal repostJob uit storage...');
+    const { repostJob } = await chrome.storage.local.get('repostJob');
+    
+    if (!repostJob) {
+      log('[Plaats] STAP 7 FOUT: Geen repostJob in storage');
+      return;
+    }
+    log('[Plaats] STAP 7 OK: repostJob gevonden');
+    
+    // Update storage
+    log('[Plaats] STAP 8: Update storage met editorText...');
+    if (!repostJob.adData) {
+      repostJob.adData = {};
+    }
+    if (!repostJob.adData.description) {
+      repostJob.adData.description = {};
+    }
+    
+    repostJob.adData.description.editorText = editorContent;
+    
+    log('[Plaats] STAP 8: Sla op in chrome.storage.local...');
+    await chrome.storage.local.set({ repostJob });
+    log('[Plaats] STAP 8 OK: Opgeslagen in storage');
+    
+    // Ga terug
+    log('[Plaats] STAP 9: Ga terug met history.back()...');
+    log('[Plaats] STAP 9 DETAILS: Huidige URL = ' + window.location.href);
+    
+    // BELANGRIJK: Zet status terug naar SCRAPING_DETAILS VOOR history.back()
+    // Zodat als we terugkomen naar /seller/view/, het scraping kan beginnen
+    repostJob.status = 'SCRAPING_DETAILS';
+    await chrome.storage.local.set({ repostJob });
+    log('[Plaats] STAP 9 STATUS UPDATE: Zet status terug naar SCRAPING_DETAILS');
+    
+    // Nu gaan we terug
+    window.history.back();
+    log('[Plaats] STAP 9 OK: history.back() aangeroepen');
+    
+    log('[Plaats] ALLE STAPPEN VOLTOOID');
+    console.log('='.repeat(60));
+    
+  } catch (error) {
+    console.error('[Plaats] FOUT in handleEditPageCopy:', error);
+    console.error('[Plaats] Stack:', error.stack);
+  }
 }
 
 // ============================================
@@ -317,7 +562,10 @@ async function fillForm(repostJob) {
     
     // STAP 2: Vul beschrijving in
     console.log('[Plaats] 📝 STAP 2: Vul beschrijving in');
-    await fillDescription(adData.description.text);
+    // Gebruik editorText als beschikbaar (gekopieerd uit editor), anders vallen we terug op normale text
+    const descriptionToUse = adData.description.editorText || adData.description.text;
+    console.log('[Plaats] 🔍 Gebruik beschrijving bron:', adData.description.editorText ? 'FROM EDITOR' : 'FROM SCRAPER');
+    await fillDescription(descriptionToUse);
     await sleep(1000);
     
     // STAP 3: Selecteer prijstype (altijd "Zie omschrijving")
@@ -363,10 +611,10 @@ async function fillForm(repostJob) {
 // Upload alle afbeeldingen via file input
 // ============================================
 async function uploadImages(imageData_base64) {
-  console.log('[Plaats] 📤 Start uploaden van', imageData_base64.length, 'afbeeldingen');
+  log('📤 Start uploaden van ' + imageData_base64.length + ' afbeeldingen');
   
   if (!imageData_base64 || imageData_base64.length === 0) {
-    console.warn('[Plaats] ⚠️ Geen afbeeldingen om te uploaden');
+    log('⚠️ Geen afbeeldingen om te uploaden');
     return;
   }
   
@@ -374,22 +622,22 @@ async function uploadImages(imageData_base64) {
   const fileInput = document.querySelector('input[type="file"][accept*=".jpg"]');
   
   if (!fileInput) {
-    console.error('[Plaats] ❌ File input niet gevonden');
+    log('❌ File input niet gevonden');
     return;
   }
   
-  console.log('[Plaats] ✅ File input gevonden');
+  log('✅ File input gevonden');
   
   // Converteer Base64 naar File objecten
-  console.log('[Plaats] 🔄 Converteer Base64 naar Files...');
+  log('🔄 Converteer Base64 naar Files...');
   const files = await convertBase64ToFiles(imageData_base64);
   
   if (files.length === 0) {
-    console.error('[Plaats] ❌ Geen files geconverteerd');
+    log('❌ Geen files geconverteerd');
     return;
   }
   
-  console.log('[Plaats] ✅', files.length, 'files klaar voor upload');
+  log('✅ ' + files.length + ' files klaar voor upload');
   
   // Upload via DataTransfer API
   const dataTransfer = new DataTransfer();
@@ -397,30 +645,41 @@ async function uploadImages(imageData_base64) {
   
   fileInput.files = dataTransfer.files;
   
+  log('📋 Files toegevoegd aan input: ' + fileInput.files.length + ' bestanden');
+  
   // Trigger events
   fileInput.dispatchEvent(new Event('change', { bubbles: true }));
   fileInput.dispatchEvent(new Event('input', { bubbles: true }));
   
-  console.log('[Plaats] ✅ Afbeeldingen geüpload!');
+  log('✅ Afbeeldingen geüpload!');
   
   // Wacht op verwerking
-  console.log('[Plaats] ⏳ Wacht op verwerking...');
-  await sleep(3000);
+  log('⏳ Wacht 5 seconden op verwerking...');
+  await sleep(5000); // Verhoog naar 5 seconden
+  
+  // Check hoeveel thumbnails er zijn
+  const thumbnails = document.querySelectorAll('[data-testid="image-thumbnail"]');
+  log('📊 Aantal thumbnails zichtbaar: ' + thumbnails.length);
 }
 
 // ============================================
 // CONVERT BASE64 TO FILES
 // ============================================
 async function convertBase64ToFiles(imageData) {
-  console.log('[Plaats] 🔄 Converteer', imageData.length, 'Base64 strings');
+  log('🔄 Converteer ' + imageData.length + ' Base64 strings');
   const files = [];
   
   for (let i = 0; i < imageData.length; i++) {
     try {
       const { base64, type } = imageData[i];
       
+      if (!base64) {
+        log('⚠️ Afbeelding ' + (i + 1) + ' heeft geen base64 data, skip');
+        continue;
+      }
+      
       // Verwijder data URL prefix
-      const base64Data = base64.split(',')[1];
+      const base64Data = base64.includes(',') ? base64.split(',')[1] : base64;
       
       // Decode Base64
       const binaryString = atob(base64Data);
@@ -430,144 +689,144 @@ async function convertBase64ToFiles(imageData) {
         bytes[j] = binaryString.charCodeAt(j);
       }
       
-      // Creëer File
+      // Creëer Blob
       const blob = new Blob([bytes], { type: type || 'image/jpeg' });
-      const file = new File([blob], `image_${i + 1}.jpg`, {
-        type: type || 'image/jpeg',
+      const originalSizeKB = Math.round(blob.size / 1024);
+      
+      log('📏 Originele grootte afbeelding ' + (i + 1) + ': ' + originalSizeKB + 'KB');
+      
+      // Check of compressie nodig is (> 3.5MB = 3584KB, om zeker te zijn onder 4MB)
+      let finalBlob = blob;
+      if (blob.size > 3.5 * 1024 * 1024) {
+        log('⚠️ Afbeelding ' + (i + 1) + ' is te groot, comprimeer...');
+        finalBlob = await compressImage(blob);
+        const compressedSizeKB = Math.round(finalBlob.size / 1024);
+        log('✅ Gecomprimeerd naar ' + compressedSizeKB + 'KB');
+      }
+      
+      // Creëer File
+      const file = new File([finalBlob], `image_${i + 1}.jpg`, {
+        type: 'image/jpeg',
         lastModified: Date.now()
       });
       
       files.push(file);
-      console.log(`[Plaats] ✅ File ${i + 1}: ${file.name} (${Math.round(file.size / 1024)}KB)`);
+      log('✅ File ' + (i + 1) + ': ' + file.name + ' (' + Math.round(file.size / 1024) + 'KB)');
       
     } catch (error) {
-      console.error(`[Plaats] ❌ Fout bij converteren afbeelding ${i + 1}:`, error);
+      log('❌ Fout bij converteren afbeelding ' + (i + 1) + ': ' + error.message);
     }
   }
   
+  log('📊 Totaal geconverteerd: ' + files.length + '/' + imageData.length + ' files');
   return files;
 }
 
 // ============================================
+// COMPRESS IMAGE
+// Comprimeert een image blob tot onder 3.5MB
+// ============================================
+async function compressImage(blob) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    const url = URL.createObjectURL(blob);
+    
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      
+      // Maak canvas
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      
+      // Bereken nieuwe dimensies (max 1920x1920 voor grote bestanden)
+      let width = img.width;
+      let height = img.height;
+      const maxDimension = 1920;
+      
+      if (width > maxDimension || height > maxDimension) {
+        if (width > height) {
+          height = (height / width) * maxDimension;
+          width = maxDimension;
+        } else {
+          width = (width / height) * maxDimension;
+          height = maxDimension;
+        }
+      }
+      
+      canvas.width = width;
+      canvas.height = height;
+      
+      // Teken image
+      ctx.drawImage(img, 0, 0, width, height);
+      
+      // Probeer verschillende kwaliteiten tot het onder 3.5MB is
+      let quality = 0.8;
+      
+      const tryCompress = () => {
+        canvas.toBlob((compressedBlob) => {
+          if (compressedBlob.size > 3.5 * 1024 * 1024 && quality > 0.3) {
+            // Nog te groot, probeer lagere kwaliteit
+            quality -= 0.1;
+            tryCompress();
+          } else {
+            // Goed genoeg
+            resolve(compressedBlob);
+          }
+        }, 'image/jpeg', quality);
+      };
+      
+      tryCompress();
+    };
+    
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      // Fallback: return origineel
+      resolve(blob);
+    };
+    
+    img.src = url;
+  });
+}
+
+// ============================================
 // FILL DESCRIPTION
-// Vult de beschrijving - SIMPELE METHODE
-// Gebruikt direct value setter zonder chunks
+// Wacht tot gebruiker zelf Ctrl+V doet
 // ============================================
 async function fillDescription(description) {
-  console.log('[Plaats] 📝 Vul beschrijving in (', description.length, 'karakters)');
-  console.log('[Plaats] Beschrijving preview:', description.substring(0, 100) + '...');
+  log('📝 Vul beschrijving in');
   
   // Zoek de Lexical editor
   const editor = document.querySelector('.RichTextEditor-module-editorInput[data-testid="text-editor-input_nl-NL"]');
   
   if (!editor) {
-    console.error('[Plaats] ❌ Beschrijving editor niet gevonden');
-    
-    // Debug: zoek alternatieve editors
-    const allEditors = document.querySelectorAll('[contenteditable="true"], [class*="editor"], [class*="Editor"]');
-    console.log('[Plaats] 🔍 Gevonden contenteditable elementen:', allEditors.length);
-    allEditors.forEach((el, i) => {
-      console.log(`  [${i}] Class: ${el.className}`);
-    });
-    
+    log('❌ Beschrijving editor niet gevonden!');
     return;
   }
   
-  console.log('[Plaats] ✅ Editor gevonden');
+  log('✅ Editor gevonden');
   
   // Focus op editor
   editor.focus();
   await sleep(500);
   
-  // VOLLEDIG LEEGMAKEN - AGRESSIEF
-  console.log('[Plaats] 🧹 Clear alle content...');
-  editor.innerHTML = '';
-  editor.textContent = '';
-  editor.innerText = '';
+  // Wacht tot gebruiker iets plakt
+  log('⏸️ Wacht tot je Ctrl+V doet in de beschrijving...');
   
-  // Selecteer alles en verwijder
-  const selection = window.getSelection();
-  const range = document.createRange();
-  range.selectNodeContents(editor);
-  selection.removeAllRanges();
-  selection.addRange(range);
-  document.execCommand('delete', false);
+  const maxWaitTime = 30000; // 30 seconden max
+  const startTime = Date.now();
   
-  await sleep(300);
-  
-  // Check of echt leeg
-  console.log('[Plaats] 📋 Na clearen - innerHTML:', editor.innerHTML);
-  console.log('[Plaats] 📋 Na clearen - textContent:', editor.textContent);
-  
-  // Focus opnieuw
-  editor.focus();
-  await sleep(200);
-  
-  // Plaats cursor aan begin
-  range.selectNodeContents(editor);
-  selection.removeAllRanges();
-  selection.addRange(range);
-  
-  await sleep(200);
-  
-  // METHODE 1: Probeer insertText in ÉÉN keer (geen chunks!)
-  console.log('[Plaats] 📝 Methode 1: Gebruik insertText...');
-  const success = document.execCommand('insertText', false, description);
-  console.log('[Plaats] insertText success:', success);
-  
-  // Trigger input event
-  editor.dispatchEvent(new InputEvent('input', {
-    bubbles: true,
-    cancelable: true,
-    inputType: 'insertText',
-    data: null
-  }));
-  
-  await sleep(500);
-  
-  // Verificatie
-  const currentContent = editor.textContent || editor.innerText || '';
-  console.log('[Plaats] 📋 Content lengte na insertText:', currentContent.length);
-  console.log('[Plaats] 📋 Verwachte lengte:', description.length);
-  
-  if (currentContent.length > 0 && currentContent.length === description.length) {
-    console.log('[Plaats] ✅ Beschrijving succesvol ingevuld met insertText');
+  while (Date.now() - startTime < maxWaitTime) {
+    const content = editor.innerText || editor.textContent || '';
     
-    // Trigger final events
-    editor.dispatchEvent(new Event('change', { bubbles: true }));
-    editor.blur();
-    return;
+    if (content.trim().length > 10) {
+      log('✅ Beschrijving gedetecteerd: ' + content.length + ' karakters');
+      return;
+    }
+    
+    await sleep(500); // Check elke halve seconde
   }
   
-  // METHODE 2: Als insertText faalde, gebruik textContent
-  console.log('[Plaats] ⚠️ insertText faalde, probeer textContent...');
-  
-  // Clear opnieuw
-  editor.innerHTML = '';
-  editor.textContent = '';
-  await sleep(200);
-  
-  // Set via textContent
-  editor.textContent = description;
-  
-  // Trigger events
-  editor.dispatchEvent(new Event('input', { bubbles: true }));
-  editor.dispatchEvent(new Event('change', { bubbles: true }));
-  
-  await sleep(500);
-  
-  const finalContent = editor.textContent || '';
-  console.log('[Plaats] 📋 Content lengte na textContent:', finalContent.length);
-  
-  if (finalContent.length > 0) {
-    console.log('[Plaats] ✅ Beschrijving ingevuld met textContent');
-  } else {
-    console.error('[Plaats] ❌ Beide methodes faalden!');
-  }
-  
-  // Final trigger
-  editor.dispatchEvent(new Event('change', { bubbles: true }));
-  editor.blur();
+  log('⏱️ Timeout: Geen beschrijving geplakt na 30 seconden');
 }
 
 // ============================================
@@ -683,6 +942,14 @@ async function placeAd() {
   button.click();
   
   console.log('[Plaats] ✅ Advertentie geplaatst!');
+  
+  // Wacht 3 seconden voor redirect naar seller/view
+  console.log('[Plaats] ⏳ Wacht 3 seconden voor redirect...');
+  await sleep(3000);
+  
+  // Navigeer naar seller/view pagina
+  console.log('[Plaats] 🔄 Navigeer naar seller/view pagina...');
+  window.location.href = 'https://www.marktplaats.nl/my-account/sell/index.html';
 }
 
 // ============================================
